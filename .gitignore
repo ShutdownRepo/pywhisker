@@ -1,0 +1,6 @@
+# PyCharm and Python workspace
+.idea/
+venv
+
+# Build logs for debugging
+.build.log
