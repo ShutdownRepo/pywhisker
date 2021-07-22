@@ -6,8 +6,6 @@
 #  Remi Gascou (@podalirius_)
 #  Charlie Bromberg (@_nwodtuhs)
 #
-#  ToDo:
-# [ ]: allow users to set a ((-delegate-from-sid or -delegate-from-dn) and -delegate-to-dn) in order to skip ldapdomaindump and explicitely set the SID/DN
 
 import argparse
 import logging
@@ -26,6 +24,9 @@ from impacket.ldap import ldaptypes
 from impacket.smbconnection import SMBConnection
 from impacket.spnego import SPNEGO_NegTokenInit, TypesMech
 from ldap3.utils.conv import escape_filter_chars
+
+
+USE_CASE = {'type': b'B', 'length': b'828', 'binary_data': b'00020000200001293CDE5195FE34E2D6D7E385AE8E36EC0883CE457613458D679726E3DD8864C92000024042781613BB48B19CBEB46CD2EDB49C9FBADB5A6185DB01D1CCBBD32CF8EE591B0103525341310008000003000000000100000000000000000000010001CB56D3816B78DC0DB5BA3A766FFDA0E35902A8BD92EE38BCCA85A29838D4ADDB00BA2138D3BB89091CAC112D3DAE845E8A4DC4209DAA1357812996A2252C29B419DEC0C9EA38376F97AC1AB337868D42A534B135322045CAE9C5239E092FCA893173C64EAC11D470D0D88699D37CEE0D37C5B808328F9CB9DF432D9CCEAFABA97D276096522E17A60AEDEA41844D2AF6AF73E89326298F7A87F877856297500B97B1432F7A05BAA534734673B7B53F682D7E6C08D45BACE97BDB0392E44AA1BBD04DB646C53835A9C9BC5D9DE1A7EB5856079573B57E2E8CE652254765D8FD2ED9FD419D45529C00D81B7EDDD4BD5B8FAF2EA202ED8D9058591C016BB4F3E1E501000401010005001000064BA1D5AD9EE59242864067D70B9E9DC70200070100080008D5AF88AE717ED701080009D5AF88AE717ED701', 'dn': b'CN=user2,CN=Users,DC=domain,DC=local'}
 
 
 def get_machine_name(args, domain):
@@ -204,42 +205,25 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
     return True
 
 
-def create_empty_sd():
-    sd = ldaptypes.SR_SECURITY_DESCRIPTOR()
-    sd['Revision'] = b'\x01'
-    sd['Sbz1'] = b'\x00'
-    sd['Control'] = 32772
-    sd['OwnerSid'] = ldaptypes.LDAP_SID()
-    # BUILTIN\Administrators
-    sd['OwnerSid'].fromCanonical('S-1-5-32-544')
-    sd['GroupSid'] = b''
-    sd['Sacl'] = b''
-    acl = ldaptypes.ACL()
-    acl['AclRevision'] = 4
-    acl['Sbz1'] = 0
-    acl['Sbz2'] = 0
-    acl.aces = []
-    sd['Dacl'] = acl
-    return sd
+class DN_binary_KeyCredentialLink():
+    structure = {
+        "type": "",
+        "length": "",
+        "binary_data": "",
+        "dn": ""
+    }
 
+    def __init__(self, raw_data):
+        self.structure["type"], self.structure["length"], self.structure["binary_data"], self.structure["dn"] = raw_data.split(b":")
+        # in case of "need to parse dn": break comment
+        # keys = list(set([attr.split('=')[0].lower() for attr in self.structure["dn"].split(',')]))
+        # data = {key: [attr.split('=')[1] for attr in self.structure["dn"].split(',') if attr.split('=')[0].lower() == key] for key in keys}
 
-# Create an ALLOW ACE with the specified sid
-def create_allow_ace(sid):
-    nace = ldaptypes.ACE()
-    nace['AceType'] = ldaptypes.ACCESS_ALLOWED_ACE.ACE_TYPE
-    nace['AceFlags'] = 0x00
-    acedata = ldaptypes.ACCESS_ALLOWED_ACE()
-    acedata['Mask'] = ldaptypes.ACCESS_MASK()
-    acedata['Mask']['Mask'] = 983551  # Full control
-    acedata['Sid'] = ldaptypes.LDAP_SID()
-    acedata['Sid'].fromCanonical(sid)
-    nace['Ace'] = acedata
-    return nace
+        print(self.structure)
+
 
 
 class ShadowCredentials(object):
-    """docstring for setrbcd"""
-
     def __init__(self, ldap_server, ldap_session, delegate_to):
         super(ShadowCredentials, self).__init__()
         self.ldap_server = ldap_server
@@ -260,10 +244,7 @@ class ShadowCredentials(object):
             logging.error('Computer to modify does not exist! (wrong domain?)')
             return
         self.DN_delegate_to = result[0]
-
-        # Get list of allowed to act
         self.get_keycredentiallink()
-
         return
 
     def write(self, delegate_from):
@@ -392,9 +373,9 @@ class ShadowCredentials(object):
             return
 
         try:
+            attr = DN_binary_KeyCredentialLink(targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
             sd = ldaptypes.SR_SECURITY_DESCRIPTOR(
                 data=targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
-            print(sd)
             # todo : stopped here
             if len(sd['Dacl'].aces) > 0:
                 logging.info('Accounts allowed to act on behalf of other identity:')
@@ -568,15 +549,15 @@ def main():
 
     try:
         ldap_server, ldap_session = init_ldap_session(args, domain, username, password, lmhash, nthash)
-        rbcd = ShadowCredentials(ldap_server, ldap_session, args.delegate_to)
+        shadowcreds = ShadowCredentials(ldap_server, ldap_session, args.delegate_to)
         if args.action == 'read':
-            rbcd.read()
+            shadowcreds.read()
         elif args.action == 'write':
-            rbcd.write(args.delegate_from)
+            shadowcreds.write(args.delegate_from)
         elif args.action == 'remove':
-            rbcd.remove(args.delegate_from)
+            shadowcreds.remove(args.delegate_from)
         elif args.action == 'flush':
-            rbcd.flush()
+            shadowcreds.flush()
     except Exception as e:
         if logging.getLogger().level == logging.DEBUG:
             traceback.print_exc()
