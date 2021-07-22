@@ -7,27 +7,248 @@
 #  Charlie Bromberg (@_nwodtuhs)
 #
 
-import argparse
-import logging
-import sys
-import traceback
-import ldap3
-import ssl
-import ldapdomaindump
 from binascii import unhexlify
-import os
-from ldap3.protocol.formatters.formatters import format_sid
-
-from impacket import version
+from enum import Enum
 from impacket.examples import logger, utils
+from impacket import version
 from impacket.ldap import ldaptypes
 from impacket.smbconnection import SMBConnection
 from impacket.spnego import SPNEGO_NegTokenInit, TypesMech
+from ldap3.protocol.formatters.formatters import format_sid
 from ldap3.utils.conv import escape_filter_chars
+import argparse
+import base64
+import binascii
+import datetime
+import io
+import json
+import ldap3
+import ldapdomaindump
+import logging
+import os
+import ssl
+import struct
+import sys
+import time
+import traceback
 
 
-USE_CASE = {'type': b'B', 'length': b'828', 'binary_data': b'00020000200001293CDE5195FE34E2D6D7E385AE8E36EC0883CE457613458D679726E3DD8864C92000024042781613BB48B19CBEB46CD2EDB49C9FBADB5A6185DB01D1CCBBD32CF8EE591B0103525341310008000003000000000100000000000000000000010001CB56D3816B78DC0DB5BA3A766FFDA0E35902A8BD92EE38BCCA85A29838D4ADDB00BA2138D3BB89091CAC112D3DAE845E8A4DC4209DAA1357812996A2252C29B419DEC0C9EA38376F97AC1AB337868D42A534B135322045CAE9C5239E092FCA893173C64EAC11D470D0D88699D37CEE0D37C5B808328F9CB9DF432D9CCEAFABA97D276096522E17A60AEDEA41844D2AF6AF73E89326298F7A87F877856297500B97B1432F7A05BAA534734673B7B53F682D7E6C08D45BACE97BDB0392E44AA1BBD04DB646C53835A9C9BC5D9DE1A7EB5856079573B57E2E8CE652254765D8FD2ED9FD419D45529C00D81B7EDDD4BD5B8FAF2EA202ED8D9058591C016BB4F3E1E501000401010005001000064BA1D5AD9EE59242864067D70B9E9DC70200070100080008D5AF88AE717ED701080009D5AF88AE717ED701', 'dn': b'CN=user2,CN=Users,DC=domain,DC=local'}
 
+
+class KeyCredentialEntryType(Enum):
+    KeyID = 0x01
+    KeyHash = 0x02
+    KeyMaterial = 0x03
+    KeyUsage = 0x04
+    KeySource = 0x05
+    DevideId = 0x06
+    CustomKeyInformation = 0x07
+    KeyApproximateLastLogonTimeStamp = 0x08
+    KeyCreationTime = 0x09
+
+class KeyCredentialVersion(Enum):
+    Version0 = 0x0
+    Version1 = 0x00000100
+    Version2 = 0x00000200
+
+class KeySource(Enum):
+    AD = 0x0
+    AzureAD = 0x1
+    OTHER = 0x0
+
+class KeyUsage(Enum):
+    AdminKey = 0x0
+    NGC = 0x1
+    STK = 0x2
+    BitLockerRecovery = 0x3
+    FIDO = 0x7
+    FEK = 0x8
+    OTHER = 0x0
+
+class CustomKeyInformation(object):
+    def __init__(self, keyMaterial, version:KeyCredentialVersion):
+        super(CustomKeyInformation, self).__init__()
+
+        stream_data = io.BytesIO(keyMaterial)
+
+        # An 8-bit unsigned integer that must be set to 1:
+        self.Version = None
+        self.Version = struct.unpack('<B',stream_data.read(1))[0]
+
+        # An 8-bit unsigned integer that specifies zero or more bit-flag values.
+        self.Flags = None
+        self.Flags = struct.unpack('<B',stream_data.read(1))[0]
+
+        # Note: This structure has two possible representations.
+        # In the first representation, only the Version and Flags fields are
+        # present; in this case the structure has a total size of two bytes.
+        # In the second representation, all additional fields shown below are
+        # also present; in this case, the structure's total size is variable.
+        # Differentiating between the two representations must be inferred using
+        # only the total size.
+
+        # An 8-bit unsigned integer that specifies one of the volume types.
+        data = stream_data.read(1)
+        if len(data) != 0:
+            self.VolumeType = struct.unpack('<B',data)[0]
+        else:
+            self.VolumeType = None
+
+        # An 8-bit unsigned integer that specifies whether the device associated with this credential supports notification.
+        data = stream_data.read(1)
+        if len(data) != 0:
+            self.SupportsNotification = bool(struct.unpack('<B',data)[0]);
+        else:
+            self.SupportsNotification = None
+
+        # An 8-bit unsigned integer that specifies the version of the
+        # File Encryption Key (FEK). This field must be set to 1.
+        data = stream_data.read(1)
+        if len(data) != 0:
+            self.FekKeyVersion = struct.unpack('<B',data)[0]
+        else:
+            self.FekKeyVersion = None
+
+        # An 8-bit unsigned integer that specifies the strength of the NGC key.
+        data = stream_data.read(1)
+        if len(data) != 0:
+            self.Strength = struct.unpack('<B',data)[0]
+        else:
+            self.Strength = None
+
+        # 10 bytes reserved for future use.
+        # Note: With FIDO, Azure incorrectly puts here 9 bytes instead of 10.
+        data = stream_data.read(10)
+        if len(data) != 0:
+            self.Reserved = data.rjust(10,'b\x00')
+        else:
+            self.Reserved = None
+
+        # Extended custom key information.
+        data = stream_data.read()
+        if len(data) != 0:
+            self.EncodedExtendedCKI = data
+        else:
+            self.EncodedExtendedCKI = None
+
+    # def __dict__(self):
+    #     return vars(self)
+
+    def __repr__(self):
+        return str(vars(self))
+
+def ConvertToBinaryIdentifier(keyIdentifier, version:KeyCredentialVersion):
+    if version in [KeyCredentialVersion.Version0.value, KeyCredentialVersion.Version1.value]:
+        return binascii.unhexlify(keyIdentifier)
+    if version == KeyCredentialVersion.Version2.value:
+        return base64.b64decode(keyIdentifier)
+    else:
+        return base64.b64decode(keyIdentifier)
+
+def Guid(data:bytes):
+    a = hex(struct.unpack("<L",data[0:4])[0])[2:].rjust(4,'0')
+    b = hex(struct.unpack("<H",data[4:6])[0])[2:].rjust(2,'0')
+    c = hex(struct.unpack("<H",data[6:8])[0])[2:].rjust(2,'0')
+    d = hex(struct.unpack(">H",data[8:10])[0])[2:].rjust(2,'0')
+    e = binascii.hexlify(data[10:16]).decode("UTF-8").rjust(6,'0')
+    return "%s-%s-%s-%s-%s" % (a, b, c, d, e)
+
+def ConvertFromBinaryTime(binaryTime:bytes, source:KeySource, version:KeyCredentialVersion):
+    """
+    Documentation for ConvertFromBinaryTime
+
+    Src : https://github.com/microsoft/referencesource/blob/master/mscorlib/system/datetime.cs
+    """
+
+    timeStamp = struct.unpack('<Q', binaryTime)[0]
+
+    # AD and AAD use a different time encoding.
+    if version == KeyCredentialVersion.Version0.value:
+        return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+    if version == KeyCredentialVersion.Version1.value:
+        return  datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+    if version == KeyCredentialVersion.Version2.value:
+        if source == KeySource.AD.value:
+            return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+        else:
+            print("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
+            return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+    else:
+        if source == KeySource.AD.value:
+            return  datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+        else:
+            print("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
+            return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
+
+class DN_binary_KeyCredentialLink():
+
+    def __init__(self, raw_data):
+        self.structure = {}
+        self.version   = KeyCredentialVersion.Version0
+
+        ## Spliting input data
+        data = raw_data.decode('UTF-8').split(":")
+        # type = data[0]
+        # length = int(data[1])
+        binary_data = binascii.unhexlify(data[2])
+        self.structure["dn"] = data[3]
+
+        ## Reading binary data as stream
+        data = []
+        stream_data = io.BytesIO(binary_data)
+        self.version = struct.unpack('<L', stream_data.read(4))[0]
+
+        read_data = stream_data.read(3)
+        while read_data != b'':
+            # A 16-bit unsigned integer that specifies the length of the Value field.
+            length, entryType = struct.unpack('<HB', read_data)
+            # An 8-bit unsigned integer that specifies the type of data that is stored in the Value field.
+            data.append({
+                "entryType" : entryType,
+                "value" : stream_data.read(length)
+            })
+            read_data = stream_data.read(3)
+
+        ## Parsing data
+        self.parsed_data = {"version": self.version}
+        for row in data:
+            # print(row)
+            if row["entryType"] == KeyCredentialEntryType.KeyID.value:
+                self.parsed_data['KeyID'] = ConvertToBinaryIdentifier(row["value"], self.version)
+            elif row["entryType"] == KeyCredentialEntryType.KeyHash.value:
+                # We do not need to validate the integrity of the data by the hash
+                pass
+            elif row["entryType"] == KeyCredentialEntryType.KeyMaterial.value:
+                self.parsed_data['KeyMaterial'] = row["value"]
+            elif row["entryType"] == KeyCredentialEntryType.KeyUsage.value:
+                if(len(row["value"]) == 1):
+                    # This is apparently a V2 structure
+                    self.parsed_data['Usage'] = row["value"][0]
+                else:
+                    # This is a legacy structure that contains a string-encoded key usage instead of enum.
+                    self.parsed_data['LegacyUsage'] = row["value"].decode('UTF-8')
+            elif row["entryType"] == KeyCredentialEntryType.KeySource.value:
+                self.parsed_data['KeySource'] = row["value"][0]
+                self.source = self.parsed_data['KeySource']
+            elif row["entryType"] == KeyCredentialEntryType.DevideId.value:
+                self.parsed_data['DevideId'] = Guid(row["value"])
+            elif row["entryType"] == KeyCredentialEntryType.CustomKeyInformation.value:
+                self.parsed_data['CustomKeyInfo'] = CustomKeyInformation(row["value"], self.version)
+            elif row["entryType"] == KeyCredentialEntryType.KeyApproximateLastLogonTimeStamp.value:
+                self.parsed_data['KeyApproximateLastLogonTimeStamp'] = ConvertFromBinaryTime(row["value"], self.source, self.version)
+            elif row["entryType"] == KeyCredentialEntryType.KeyCreationTime.value:
+                self.parsed_data['KeyCreationTime'] = ConvertFromBinaryTime(row["value"], self.source, self.version)
+
+
+    def show(self):
+        for key in self.parsed_data.keys():
+            print("\x1b[91m => %s\x1b[0m:" % key,self.parsed_data[key])
+
+    def __repr__(self):
+        return "<DN_binary_KeyCredentialLink version=%s>" % hex(self.version)
+
+    def __dict__(self):
+        return self.structure
 
 def get_machine_name(args, domain):
     if args.dc_ip is not None:
@@ -44,8 +265,7 @@ def get_machine_name(args, domain):
     return s.getServerName()
 
 
-def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='', nthash='', aesKey='', kdcHost=None,
-                         TGT=None, TGS=None, useCache=True):
+def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     from pyasn1.codec.ber import encoder, decoder
     from pyasn1.type.univ import noValue
     """
@@ -204,25 +424,6 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
 
     return True
 
-
-class DN_binary_KeyCredentialLink():
-    structure = {
-        "type": "",
-        "length": "",
-        "binary_data": "",
-        "dn": ""
-    }
-
-    def __init__(self, raw_data):
-        self.structure["type"], self.structure["length"], self.structure["binary_data"], self.structure["dn"] = raw_data.split(b":")
-        # in case of "need to parse dn": break comment
-        # keys = list(set([attr.split('=')[0].lower() for attr in self.structure["dn"].split(',')]))
-        # data = {key: [attr.split('=')[1] for attr in self.structure["dn"].split(',') if attr.split('=')[0].lower() == key] for key in keys}
-
-        print(self.structure)
-
-
-
 class ShadowCredentials(object):
     def __init__(self, ldap_server, ldap_session, delegate_to):
         super(ShadowCredentials, self).__init__()
@@ -245,6 +446,7 @@ class ShadowCredentials(object):
             return
         self.DN_delegate_to = result[0]
         self.get_keycredentiallink()
+
         return
 
     def write(self, delegate_from):
@@ -375,7 +577,7 @@ class ShadowCredentials(object):
         try:
             attr = DN_binary_KeyCredentialLink(targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
             sd = ldaptypes.SR_SECURITY_DESCRIPTOR(
-                data=targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
+                data = targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
             # todo : stopped here
             if len(sd['Dacl'].aces) > 0:
                 logging.info('Accounts allowed to act on behalf of other identity:')
