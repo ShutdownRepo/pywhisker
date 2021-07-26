@@ -141,9 +141,9 @@ def ConvertToBinaryIdentifier(keyIdentifier, version:KeyCredentialVersion):
     if version in [KeyCredentialVersion.Version0.value, KeyCredentialVersion.Version1.value]:
         return binascii.unhexlify(keyIdentifier)
     if version == KeyCredentialVersion.Version2.value:
-        return base64.b64decode(keyIdentifier)
+        return base64.b64decode(keyIdentifier + b"===")
     else:
-        return base64.b64decode(keyIdentifier)
+        return base64.b64decode(keyIdentifier + b"===")
 
 def Guid(data:bytes):
     a = hex(struct.unpack("<L",data[0:4])[0])[2:].rjust(4,'0')
