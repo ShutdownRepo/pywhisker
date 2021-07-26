@@ -468,12 +468,11 @@ class ShadowCredentials(object):
         return
 
     def add(self, password, path):
-        logging.info("No path was provided. The certificate will be printed as a Base64 blob")
+        if path is None:
+            logging.info("No path was provided. The certificate will be printed as a Base64 blob")
         if password is None:
             password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
             logging.info("No pass was provided. The certificate will be store with the password: %s" % password)
-        if path is None:
-            pass
         logging.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
