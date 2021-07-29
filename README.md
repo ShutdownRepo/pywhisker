@@ -1,7 +1,7 @@
 # PyWhisker
 
 pyWhisker is a Python equivalent of the original [Whisker](https://github.com/eladshamir/Whisker) made by [Elad Shamir](https://twitter.com/elad_shamir) and written in C#. This tool allows users to manipulate the `msDS-KeyCredentialLink` attribute of a target user/computer to obtain full control over that object.
-It's based on [Impacket](https://github.com/SecureAuthCorp/impacket) and on our Python equivalent of [Michael Grafnetter's](https://twitter.com/MGrafnetter) [DSInternals](https://github.com/MichaelGrafnetter/DSInternals) called [PyDSInternals](#todo).
+It's based on [Impacket](https://github.com/SecureAuthCorp/impacket) and on our Python equivalent of [Michael Grafnetter's](https://twitter.com/MGrafnetter) [DSInternals](https://github.com/MichaelGrafnetter/DSInternals) called [PyDSInternals](https://github.com/p0dalirius/pydsinternals).
 This tool, along with [Dirk-jan's](https://twitter.com/_dirkjan) [PKINITtools](https://github.com/dirkjanm/PKINITtools) allow for a complete primitive exploitation on UNIX-based systems only.
 
 **Pre-requisites** for this attack are as follows
