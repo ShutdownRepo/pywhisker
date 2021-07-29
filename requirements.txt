@@ -1,0 +1,8 @@
+impacket
+cryptography
+six
+pyasn1
+ldap3
+ldapdomaindump
+rich
+setuptools
