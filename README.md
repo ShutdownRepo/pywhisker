@@ -147,7 +147,7 @@ python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a155
 
 # Relayed authentication
 
-[A Pull Request]() is currently awaiting approval to include pywhisker's "adding" feature to ntlmrelayx.
+[A Pull Request](https://github.com/SecureAuthCorp/impacket/pull/1132) is currently awaiting approval to include pywhisker's "adding" feature to ntlmrelayx.
 
 ![](./.assets/relay.png)
 
