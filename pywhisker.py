@@ -87,7 +87,6 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash):
 
 
 def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
-    print(nthash)
     from pyasn1.codec.ber import encoder, decoder
     from pyasn1.type.univ import noValue
     """
@@ -334,7 +333,7 @@ class ShadowCredentials(object):
             self.target_dn = result[0]
             logger.info("Target user found: %s" % self.target_dn)
         logger.info("Generating certificate")
-        certificate = X509Certificate2(subject=self.target_samname, keySize=2048)
+        certificate = X509Certificate2(subject=self.target_samname, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
         logger.info("Certificate generated")
         logger.info("Generating KeyCredential")
         keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
@@ -617,7 +616,7 @@ def parse_args():
     secret.add_argument("-k", "--kerberos", dest="use_kerberos", action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
 
     add = parser.add_argument_group('arguments when setting -action to add')
-    add.add_argument("-cp", "--cert-password", action='store', help='password for the stored self-signed certificate (will be random if not set)')
+    add.add_argument("-P", "--pfx-password", action='store', help='password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)')
     add.add_argument("-o", "--output-path", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key')
     add.add_argument("-e", "--export", action='store', choices=["PEM"," PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
 
@@ -659,7 +658,7 @@ def main():
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.cert_password, path=args.output_path, export_type=args.export, domain=args.auth_domain, samname=args.target_samname)
+            shadowcreds.add(password=args.pfx_password, path=args.output_path, export_type=args.export, domain=args.auth_domain, samname=args.target_samname)
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
