@@ -11,8 +11,8 @@ This tool, along with [Dirk-jan's](https://twitter.com/_dirkjan) [PKINITtools](h
 4. the attacker must have control over an account able to write the `msDs-KeyCredentialLink` attribute of the target user or computer account.
 
 Why some pre-reqs?
-Pre-reqs 1 and 2 because the PKINIT features were introduced with Windows Server 2016.
-Pre-req 3 because the DC needs its own certificate and keys for the session key exchange during the `AS_REQ <-> AS_REP` transaction.
+- Pre-reqs 1 and 2 because the PKINIT features were introduced with Windows Server 2016.
+- Pre-req 3 because the DC needs its own certificate and keys for the session key exchange during the `AS_REQ <-> AS_REP` transaction.
 
 A `KRB-ERROR (16) : KDC_ERR_PADATA_TYPE_NOSUPP` will be raised if pre-req 3 is not met.
 
@@ -135,6 +135,24 @@ python3 PKINITtools/gettgtpkinit.py -cert-pem test2_cert.pem -key-pem test2_priv
 python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a1553f15fdf24731731cecad16 domain.local/user2
 ```
 ![](./.assets/add_pem_gettgtnthash.png)
+
+# Relayed authentication
+
+[A Pull Request]() is currently awaiting approval to include pywhisker's "adding" feature to ntlmrelayx.
+
+![](./.assets/relay.png)
+
+# Useful knowledge
+
+User objects can't edit their own `msDS-KeyCredentialLink` attribute. **Computer objects can**. This means the following scenario could work: trigger an NTLM authentication from DC01, relay it to DC02, make pywhisker edit DC01's attribute to create a Kerberos PKINIT pre-authentication backdoor on it.
+
+![](./.assets/user_cant_self_edit.png)  
+
+Computer objects can edit their own `msDS-KeyCredentialLink` attribute but **can only add a KeyCredential if none already exists**.
+
+![](./.assets/computers_can_self_edit.png)
+
+If you encounter errors, make sure there is no time skew between your attacker host and the Key Distribution Center (usually the Domain Controller). In order to avoid that error, the certificates are valid 40 years before actual date, and 40 years after.
 
 # Credits and references
 

