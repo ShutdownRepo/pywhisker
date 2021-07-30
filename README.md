@@ -169,4 +169,4 @@ If you encounter errors, make sure there is no time skew between your attacker h
  
  - Credits to the whole team behind [Impacket](https://github.com/SecureAuthCorp/impacket/) and its contributors.
  
- - Credits to [Elad Shamir](https://twitter.com/elad_shamir) who created the original C# tool ([Whisker](https://github.com/eladshamir/Whisker)) and to Michael Grafnetter who made DSInternals, a library doing most of Whisker's heavy lifting. He also was the one who made the original Black Hat demo presenting the attack primitive.
+ - Credits to [Elad Shamir](https://twitter.com/elad_shamir) who created the original C# tool ([Whisker](https://github.com/eladshamir/Whisker)) and to [Michael Grafnetter's](https://twitter.com/MGrafnetter) who made [DSInternals](https://github.com/MichaelGrafnetter/DSInternals), a library doing most of Whisker's heavy lifting. He also was the one who made the original Black Hat demo presenting the attack primitive.
