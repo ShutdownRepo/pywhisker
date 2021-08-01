@@ -23,6 +23,15 @@ More information about this "Shadow Credentials" primitive
 
 # Usage
 
+pyWhisker can be used to operate various actions on the msDs-KeyCredentialLink attribute of a target
+- [list](./#list-and-get-info): list all current KeyCredentials ID and creation time
+- [info](./#list-and-get-info): print all info contained in a KeyCredential structure
+- [add](./#add-new-values): add a new KeyCredential to the `msDs-KeyCredentialLink`
+- [remove](./#clear-and-remove): remove a KeyCredential from the `msDs-KeyCredentialLink`
+- [clear](./#clear-and-remove): remove all KeyCredentials from the `msDs-KeyCredentialLink`
+- [export](./#import-and-export): export all KeyCredentials from the `msDs-KeyCredentialLink` in JSON
+- [import](./#import-and-export): overwrite the `msDs-KeyCredentialLink` with KeyCredentials from a JSON file
+
 pyWhisker supports the following authentications
  - (NTLM) Cleartext password
  - (NTLM) [Pass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/lm-and-ntlm/pass-the-hash)
@@ -33,8 +42,8 @@ pyWhisker supports the following authentications
 Among other things, pyWhisker supports multi-level verbosity, just append `-v`, `-vv`, ... to the command :)
 
 ```
-usage: pywhisker.py [-h] -t TARGET_SAMNAME [-a [{list,add,remove,clear,info}]] [--use-ldaps] [-v] [-q] [--no-pass] [--dc-ip ip address] [-d DOMAIN] [-u USER]
-                    (-p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key | -k) [-cp CERT_PASSWORD] [-o OUTPUT_PATH] [-e {PEM, PFX}] [-D DEVICE_ID]
+usage: pywhisker.py [-h] -t TARGET_SAMNAME [-a [{list,add,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--no-pass] [--dc-ip ip address] [-d DOMAIN] [-u USER]
+                    (-p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key) [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM, PFX}] [-D DEVICE_ID]
 
 Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.
 
@@ -42,7 +51,7 @@ optional arguments:
   -h, --help            show this help message and exit
   -t TARGET_SAMNAME, --target TARGET_SAMNAME
                         Target account
-  -a [{list,add,remove,clear,info}], --action [{list,add,remove,clear,info}]
+  -a [{list,add,remove,clear,info,export,import}], --action [{list,add,remove,clear,info,export,import}]
                         Action to operate on msDS-KeyCredentialLink
   --use-ldaps           Use LDAPS instead of LDAP
   -v, --verbose         verbosity level (-v for verbose, -vv for debug)
@@ -56,19 +65,12 @@ authentication & connection:
   -d DOMAIN, --domain DOMAIN
                         (FQDN) domain to authenticate to
   -u USER, --user USER  user to authenticate with
-  -p PASSWORD, --password PASSWORD
-                        password to authenticate with
-  -H [LMHASH:]NTHASH, --hashes [LMHASH:]NTHASH
-                        NT/LM hashes, format is LMhash:NThash
-  --aes-key hex key     AES key to use for Kerberos Authentication (128 or 256 bits)
-  -k, --kerberos        Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the
-                        command line
 
 arguments when setting -action to add:
-  -cp CERT_PASSWORD, --cert-password CERT_PASSWORD
-                        password for the stored self-signed certificate (will be random if not set)
-  -o OUTPUT_PATH, --output-path OUTPUT_PATH
-                        filename to store the generated self-signed PEM or PFX certificate and key
+  -P PFX_PASSWORD, --pfx-password PFX_PASSWORD
+                        password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)
+  -f FILENAME, --filename FILENAME
+                        filename to store the generated self-signed PEM or PFX certificate and key, or filename for the "import"/"export" actions
   -e {PEM, PFX}, --export {PEM, PFX}
                         choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))
 
@@ -114,7 +116,7 @@ The certificate can be exported in a PFX format (#PKCS12, certificate + private 
 ### Example with the PFX format
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --output-path test1
+python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test1
 ```
 
 ![](./.assets/add_pfx.png)
@@ -131,7 +133,7 @@ python3 PKINITtools/getnthash.py -key f4d6738897808edd3868fa8c60f147366c41016df6
 ### Example with the PEM format
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --output-path test2 --export PEM
+python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test2 --export PEM
 ```
 
 ![](./.assets/add_pem.png)
@@ -144,6 +146,18 @@ python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a155
 ```
 
 ![](./.assets/add_pem_gettgtnthash.png)
+
+
+### Import and Export
+
+KeyCredentials stored in the `msDs-KeyCredentialLink` attribute can be parsed, structured and saved as JSON.
+
+![](./.assets/export.png)
+
+The JSON export can then be used to restore the `msDs-KeyCredentialLink` attribute in the state it was at the time of export.
+
+![](./.assets/import.png)
+
 
 # Relayed authentication
 

