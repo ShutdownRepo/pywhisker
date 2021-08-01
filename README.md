@@ -24,13 +24,13 @@ More information about this "Shadow Credentials" primitive
 # Usage
 
 pyWhisker can be used to operate various actions on the msDs-KeyCredentialLink attribute of a target
-- [list](./#list-and-get-info): list all current KeyCredentials ID and creation time
-- [info](./#list-and-get-info): print all info contained in a KeyCredential structure
-- [add](./#add-new-values): add a new KeyCredential to the `msDs-KeyCredentialLink`
-- [remove](./#clear-and-remove): remove a KeyCredential from the `msDs-KeyCredentialLink`
-- [clear](./#clear-and-remove): remove all KeyCredentials from the `msDs-KeyCredentialLink`
-- [export](./#import-and-export): export all KeyCredentials from the `msDs-KeyCredentialLink` in JSON
-- [import](./#import-and-export): overwrite the `msDs-KeyCredentialLink` with KeyCredentials from a JSON file
+- [list](https://github.com/ShutdownRepo/pywhisker#list-and-get-info): list all current KeyCredentials ID and creation time
+- [info](https://github.com/ShutdownRepo/pywhisker#list-and-get-info): print all info contained in a KeyCredential structure
+- [add](https://github.com/ShutdownRepo/pywhisker#add-new-values): add a new KeyCredential to the `msDs-KeyCredentialLink`
+- [remove](https://github.com/ShutdownRepo/pywhisker#clear-and-remove): remove a KeyCredential from the `msDs-KeyCredentialLink`
+- [clear](https://github.com/ShutdownRepo/pywhisker#clear-and-remove): remove all KeyCredentials from the `msDs-KeyCredentialLink`
+- [export](https://github.com/ShutdownRepo/pywhisker#import-and-export): export all KeyCredentials from the `msDs-KeyCredentialLink` in JSON
+- [import](https://github.com/ShutdownRepo/pywhisker#import-and-export): overwrite the `msDs-KeyCredentialLink` with KeyCredentials from a JSON file
 
 pyWhisker supports the following authentications
  - (NTLM) Cleartext password
