@@ -42,8 +42,8 @@ pyWhisker supports the following authentications
 Among other things, pyWhisker supports multi-level verbosity, just append `-v`, `-vv`, ... to the command :)
 
 ```
-usage: pywhisker.py [-h] -t TARGET_SAMNAME [-a [{list,add,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--no-pass] [--dc-ip ip address] [-d DOMAIN] [-u USER]
-                    (-p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key) [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM, PFX}] [-D DEVICE_ID]
+usage: pywhisker.py [-h] -t TARGET_SAMNAME [-a [{list,add,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN] [-u USER]
+                    [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key] [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM, PFX}] [-D DEVICE_ID]
 
 Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.
 
@@ -57,14 +57,20 @@ optional arguments:
   -v, --verbose         verbosity level (-v for verbose, -vv for debug)
   -q, --quiet           show no information at all
 
-authentication:
-  --no-pass             don't ask for password (useful for -k)
-
 authentication & connection:
   --dc-ip ip address    IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter
   -d DOMAIN, --domain DOMAIN
                         (FQDN) domain to authenticate to
   -u USER, --user USER  user to authenticate with
+
+  --no-pass             don't ask for password (useful for -k)
+  -p PASSWORD, --password PASSWORD
+                        password to authenticate with
+  -H [LMHASH:]NTHASH, --hashes [LMHASH:]NTHASH
+                        NT/LM hashes, format is LMhash:NThash
+  --aes-key hex key     AES key to use for Kerberos Authentication (128 or 256 bits)
+  -k, --kerberos        Use Kerberos authentication. Grabs credentials from .ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the
+                        command line
 
 arguments when setting -action to add:
   -P PFX_PASSWORD, --pfx-password PFX_PASSWORD
