@@ -335,6 +335,8 @@ class ShadowCredentials(object):
         logger.info("Generating KeyCredential")
         keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
         logger.info("KeyCredential generated with DeviceID: %s" % keyCredential.DeviceId.toFormatD())
+        if args.verbosity == 2:
+            keyCredential.fromDNWithBinary(keyCredential.toDNWithBinary()).show()
         logger.debug("KeyCredential: %s" % keyCredential.toDNWithBinary().toString())
         self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
         results = None
