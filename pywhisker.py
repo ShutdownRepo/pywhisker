@@ -702,7 +702,7 @@ def parse_args():
     add = parser.add_argument_group('arguments when setting -action to add')
     add.add_argument("-P", "--pfx-password", action='store', help='password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)')
     add.add_argument("-f", "--filename", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key, or filename for the "import"/"export" actions')
-    add.add_argument("-e", "--export", action='store', choices=["PEM"," PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
+    add.add_argument("-e", "--export", action='store', choices=["PEM","PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
 
     remove = parser.add_argument_group('arguments when setting -action to remove')
     remove.add_argument("-D", "--device-id", action='store', help='device ID of the KeyCredentialLink to remove when setting -action to remove')
