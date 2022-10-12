@@ -448,6 +448,8 @@ class ShadowCredentials(object):
                 logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                 logger.verbose("Run the following command to obtain a TGT")
                 logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, self.target_samname, path))
+        else:
+            logger.warning("No user object was modified during the spray")
 
 
     def remove(self, device_id):
