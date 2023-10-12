@@ -42,9 +42,11 @@ pyWhisker supports the following authentications:
 
 Among other things, pyWhisker supports multi-level verbosity, just append `-v`, `-vv`, ... to the command :)
 
+pyWhisker can also do cross-domain, see the `-td/--target-domain` argument.
+
 ```
-usage: pywhisker.py [-h] [-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST ] [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN] [-u USER]
-                    [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key] [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM, PFX}] [-D DEVICE_ID]
+usage: pywhisker.py [-h] (-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST) [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN]
+                    [-u USER] [-td TARGET_DOMAIN] [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key] [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM,PFX}] [-D DEVICE_ID]
 
 Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.
 
@@ -53,7 +55,7 @@ optional arguments:
   -t TARGET_SAMNAME, --target TARGET_SAMNAME
                         Target account
   -tl TARGET_SAMNAME_LIST, --target-list TARGET_SAMNAME_LIST
-						Path to a file with target accounts names (one per line)
+                        Path to a file with target accounts names (one per line)
   -a [{list,add,spray,remove,clear,info,export,import}], --action [{list,add,spray,remove,clear,info,export,import}]
                         Action to operate on msDS-KeyCredentialLink
   --use-ldaps           Use LDAPS instead of LDAP
@@ -65,6 +67,8 @@ authentication & connection:
   -d DOMAIN, --domain DOMAIN
                         (FQDN) domain to authenticate to
   -u USER, --user USER  user to authenticate with
+  -td TARGET_DOMAIN, --target-domain TARGET_DOMAIN
+                        Target domain (if different than the domain of the authenticating user)
 
   --no-pass             don't ask for password (useful for -k)
   -p PASSWORD, --password PASSWORD
@@ -72,15 +76,15 @@ authentication & connection:
   -H [LMHASH:]NTHASH, --hashes [LMHASH:]NTHASH
                         NT/LM hashes, format is LMhash:NThash
   --aes-key hex key     AES key to use for Kerberos Authentication (128 or 256 bits)
-  -k, --kerberos        Use Kerberos authentication. Grabs credentials from .ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the
-                        command line
+  -k, --kerberos        Use Kerberos authentication. Grabs credentials from .ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones
+                        specified in the command line
 
 arguments when setting -action to add:
   -P PFX_PASSWORD, --pfx-password PFX_PASSWORD
                         password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)
   -f FILENAME, --filename FILENAME
                         filename to store the generated self-signed PEM or PFX certificate and key, or filename for the "import"/"export" actions
-  -e {PEM, PFX}, --export {PEM, PFX}
+  -e {PEM,PFX}, --export {PEM,PFX}
                         choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))
 
 arguments when setting -action to remove:
