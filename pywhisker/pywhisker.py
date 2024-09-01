@@ -331,7 +331,7 @@ def main():
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, args=shadowcreds.args, target_domain=target_domain, )
+            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, args=shadowcreds.args, target_domain=target_domain)
         elif args.action == 'spray':
             shadowcreds.spray(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, target_domain=target_domain)
         elif args.action == 'remove':
