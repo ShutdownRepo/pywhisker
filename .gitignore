@@ -4,3 +4,8 @@ venv
 
 # Build logs for debugging
 .build.log
+
+# Build outputs
+*.egg-info/
+dist/
+build/

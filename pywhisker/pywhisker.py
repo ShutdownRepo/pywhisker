@@ -785,6 +785,9 @@ def main():
     #if args.action == 'write' and args.delegate_from is None:
         #logger.error('`-delegate-from` should be specified when using `-action write` !')
         #sys.exit(1)
+    
+    args = parse_args()
+    logger = Logger(args.verbosity, args.quiet)
 
     if args.target_samname_list and args.action != 'spray':
         logger.error('`--target-list` should be specified only when using `--action spray` !')
@@ -836,7 +839,5 @@ def main():
         logger.error(str(e))
 
 if __name__ == '__main__':
-    args = parse_args()
-    logger = Logger(args.verbosity, args.quiet)
     console = Console()
     main()
