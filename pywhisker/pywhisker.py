@@ -287,6 +287,9 @@ class ShadowCredentials(object):
             device_id_in_current_values = False
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                 keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                if keyCredential.DeviceId is None:
+                    logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                    continue
                 if keyCredential.DeviceId.toFormatD() == device_id:
                     self.logger.success("Found device Id")
                     keyCredential.show()
@@ -323,7 +326,12 @@ class ShadowCredentials(object):
                 self.logger.info("Listing devices for %s" % self.target_samname)
                 for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                     keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                    self.logger.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId.toFormatD(), keyCredential.CreationTime))
+                    
+                    if keyCredential.DeviceId is None:
+                        self.logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                        self.logger.warning("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId, keyCredential.CreationTime))
+                    else:
+                        self.logger.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId.toFormatD(), keyCredential.CreationTime))
         except IndexError:
             self.logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
@@ -470,6 +478,9 @@ class ShadowCredentials(object):
             device_id_in_current_values = False
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                 keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                if keyCredential.DeviceId is None:
+                    logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                    continue
                 if keyCredential.DeviceId.toFormatD() == device_id:
                     self.logger.info("Found value to remove")
                     device_id_in_current_values = True
@@ -557,7 +568,10 @@ class ShadowCredentials(object):
                 with open(filename, "r") as f:
                     data = json.load(f)
                     for kcjson in data["keyCredentials"]:
-                        keyCredentials.append(KeyCredential.fromDict(kcjson).toDNWithBinary().toString())
+                        if type(kcjson) == dict:
+                            keyCredentials.append(KeyCredential.fromDict(kcjson).toDNWithBinary().toString())
+                        elif type(kcjson) == str:
+                            keyCredentials.append(kcjson)
             self.logger.info("Modifying the msDS-KeyCredentialLink attribute of %s" % self.target_samname)
             self.ldap_session.modify(self.target_dn, {'msDS-KeyCredentialLink': [ldap3.MODIFY_REPLACE, keyCredentials]})
             if self.ldap_session.result['result'] == 0:
@@ -603,7 +617,11 @@ class ShadowCredentials(object):
             keyCredentialsJSON = {"keyCredentials":[]}
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                 keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                keyCredentialsJSON["keyCredentials"].append(keyCredential.toDict())
+                try:
+                    keyCredentialsJSON["keyCredentials"].append(keyCredential.toDict())
+                except Exception as e:
+                    logger.warning(f"Failed to serialize keyCredential, error: %s, saving the raw keyCredential instead, i.e.: %s" % (str(e), dn_binary_value.decode()))
+                    keyCredentialsJSON["keyCredentials"].append(dn_binary_value.decode())
             with open(filename, "w") as f:
                 f.write(json.dumps(keyCredentialsJSON, indent=4))
             self.logger.success("Saved JSON dump at path: %s" % filename)
