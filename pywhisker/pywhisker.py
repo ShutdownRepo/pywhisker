@@ -42,6 +42,19 @@ def get_machine_name(args, domain):
         s.logoff()
     return s.getServerName() + '.' + s.getServerDNSDomainName()
 
+def init_ldap_schannel_connection(domain_controller, crt, key):
+    """
+    Initializes an LDAP connection using Schannel (certificate-based authentication).
+    """
+    #logger.debug("Creating LDAP connection using Schannel (TLS)")
+    port = 636
+    tls = ldap3.Tls(local_private_key_file=key, local_certificate_file=crt, validate=ssl.CERT_NONE)
+    ldap_server_kwargs = {'use_ssl': True, 'port': port, 'tls': tls, 'get_info': ldap3.ALL}
+    ldap_server = ldap3.Server(domain_controller, **ldap_server_kwargs)
+    ldap_conn = ldap3.Connection(ldap_server)
+    #logger.debug(f"Attempting to open connection to {domain_controller} on port {port}")
+    ldap_conn.open()
+    return ldap_server, ldap_conn
 
 def init_ldap_connection(target, tls_version, args, domain, username, password, lmhash, nthash):
     user = '%s\\%s' % (domain, username)
@@ -72,6 +85,14 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
 
 
 def init_ldap_session(args, domain, username, password, lmhash, nthash):
+    if args.use_schannel:
+        target = args.dc_ip if args.dc_ip is not None else domain
+        #self.logger.info("Using LDAP over Schannel (TLS) connection.")
+        try:
+            return init_ldap_schannel_connection(target, args.crt, args.key)
+        except ldap3.core.exceptions.LDAPSocketOpenError:
+            raise Exception(f"[ERROR] Failed to open LDAP Schannel connection to {target}")
+        
     if args.use_kerberos:
         target = get_machine_name(args, domain)
     else:
@@ -351,7 +372,7 @@ class ShadowCredentials(object):
         self.logger.info("Generating KeyCredential")
         keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
         self.logger.info("KeyCredential generated with DeviceID: %s" % keyCredential.DeviceId.toFormatD())
-        if args.verbosity == 2:
+        if self.logger.verbosity == 2:
             keyCredential.fromDNWithBinary(keyCredential.toDNWithBinary()).show()
         self.logger.debug("KeyCredential: %s" % keyCredential.toDNWithBinary().toString())
         self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
@@ -764,6 +785,7 @@ def parse_args():
 
     parser.add_argument("-a", "--action", choices=['list', 'add', 'spray', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('--use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
+    parser.add_argument('--use-schannel', action='store_true', help='Use LDAP Schannel (TLS) for certificate-based authentication')
     parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0, help="verbosity level (-v for verbose, -vv for debug)")
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
 
@@ -771,6 +793,8 @@ def parse_args():
     authconn.add_argument('--dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
     authconn.add_argument("-d", "--domain", dest="auth_domain", metavar="DOMAIN", action="store", help="(FQDN) domain to authenticate to")
     authconn.add_argument("-u", "--user", dest="auth_username", metavar="USER", action="store", help="user to authenticate with")
+    authconn.add_argument("-crt", "--certfile", dest="crt", metavar="CERTFILE", help="Path to the user certificate (PEM format) for Schannel authentication")
+    authconn.add_argument("-key", "--keyfile", dest="key", metavar="KEYFILE", help="Path to the user private key (PEM format) for Schannel authentication")
     authconn.add_argument("-td", "--target-domain", type=str, dest="target_domain", help="Target domain (if different than the domain of the authenticating user)")
 
     secret = parser.add_argument_group()
