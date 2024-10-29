@@ -39,14 +39,16 @@ pyWhisker supports the following authentications:
  - (Kerberos) Cleartext password
  - (Kerberos) [Pass-the-key](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-key) / [Overpass-the-hash](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/overpass-the-hash)
  - (Kerberos) [Pass-the-cache](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-cache) (type of [Pass-the-ticket](https://www.thehacker.recipes/active-directory-domain-services/movement/kerberos/pass-the-ticket))
+ - (LDAP over Schannel) [Pass-the-cert](https://www.thehacker.recipes/ad/movement/schannel/passthecert)
 
 Among other things, pyWhisker supports multi-level verbosity, just append `-v`, `-vv`, ... to the command :)
 
 pyWhisker can also do cross-domain, see the `-td/--target-domain` argument.
 
 ```
-usage: pywhisker.py [-h] (-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST) [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [-v] [-q] [--dc-ip ip address] [-d DOMAIN]
-                    [-u USER] [-td TARGET_DOMAIN] [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key] [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM,PFX}] [-D DEVICE_ID]
+usage: pywhisker [-h] (-t TARGET_SAMNAME | -tl TARGET_SAMNAME_LIST) [-a [{list,add,spray,remove,clear,info,export,import}]] [--use-ldaps] [--use-schannel] [-v] [-q]
+                 [--dc-ip ip address] [-d DOMAIN] [-u USER] [-crt CERTFILE] [-key KEYFILE] [-td TARGET_DOMAIN] [--no-pass | -p PASSWORD | -H [LMHASH:]NTHASH | --aes-key hex key]
+                 [-k] [-P PFX_PASSWORD] [-f FILENAME] [-e {PEM,PFX}] [-D DEVICE_ID]
 
 Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks.
 
@@ -59,6 +61,7 @@ optional arguments:
   -a [{list,add,spray,remove,clear,info,export,import}], --action [{list,add,spray,remove,clear,info,export,import}]
                         Action to operate on msDS-KeyCredentialLink
   --use-ldaps           Use LDAPS instead of LDAP
+  --use-schannel        Use LDAP Schannel (TLS) for certificate-based authentication
   -v, --verbose         verbosity level (-v for verbose, -vv for debug)
   -q, --quiet           show no information at all
 
@@ -67,6 +70,10 @@ authentication & connection:
   -d DOMAIN, --domain DOMAIN
                         (FQDN) domain to authenticate to
   -u USER, --user USER  user to authenticate with
+  -crt, --certfile CERTFILE
+                        Path to the user certificate (PEM format) for Schannel authentication
+  -key, --keyfile KEYFILE
+                        Path to the user private key (PEM format) for Schannel authentication
   -td TARGET_DOMAIN, --target-domain TARGET_DOMAIN
                         Target domain (if different than the domain of the authenticating user)
 
