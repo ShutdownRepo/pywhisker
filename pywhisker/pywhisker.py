@@ -803,9 +803,10 @@ def main():
     #if args.action == 'write' and args.delegate_from is None:
         #logger.error('`-delegate-from` should be specified when using `-action write` !')
         #sys.exit(1)
-    
-    global args = parse_args()
-    global logger = Logger(args.verbosity, args.quiet)
+    global args
+    args = parse_args()
+    global logger
+    logger = Logger(args.verbosity, args.quiet)
 
     if args.target_samname_list and args.action != 'spray':
         logger.error('`--target-list` should be specified only when using `--action spray` !')
