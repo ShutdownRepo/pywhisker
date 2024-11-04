@@ -28,6 +28,9 @@ from dsinternals.system.DateTime import DateTime
 
 from rich.console import Console
 
+args = None
+logger = None
+
 def get_machine_name(args, domain):
     if args.dc_ip is not None:
         s = SMBConnection(args.dc_ip, args.dc_ip)
