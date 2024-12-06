@@ -175,7 +175,7 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
                     TGT = creds.toTGT()
                     logger.debug('Using TGT from cache')
                 else:
-                    logger.debug('No valid credentials found in cache')
+                    logger.debug(f'Principal {principal} not found in cache')
             else:
                 TGS = creds.toTGS(principal)
                 logger.debug('Using TGS from cache')
