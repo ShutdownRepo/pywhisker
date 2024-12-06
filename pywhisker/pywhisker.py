@@ -56,7 +56,7 @@ def init_ldap_schannel_connection(domain_controller, crt, key):
     ldap_conn.open()
     return ldap_server, ldap_conn
 
-def init_ldap_connection(target, tls_version, args, domain, username, password, lmhash, nthash):
+def init_ldap_connection(target, tls_version, args, domain, username, password, lmhash, nthash, logger):
     user = '%s\\%s' % (domain, username)
     connect_to = target
     if args.dc_ip is not None:
@@ -73,7 +73,7 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
     if args.use_kerberos:
         ldap_session = ldap3.Connection(ldap_server)
         ldap_session.bind()
-        ldap3_kerberos_login(ldap_session, target, username, password, domain, lmhash, nthash, args.auth_key, kdcHost=args.dc_ip)
+        ldap3_kerberos_login(ldap_session, target, username, password, logger, domain, lmhash, nthash, args.auth_key, kdcHost=args.dc_ip)
     elif args.auth_hashes is not None:
         if lmhash == "":
             lmhash = "aad3b435b51404eeaad3b435b51404ee"
@@ -84,7 +84,7 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
     return ldap_server, ldap_session
 
 
-def init_ldap_session(args, domain, username, password, lmhash, nthash):
+def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
     if args.use_schannel:
         target = args.dc_ip if args.dc_ip is not None else domain
         #self.logger.info("Using LDAP over Schannel (TLS) connection.")
@@ -103,16 +103,16 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash):
 
     if args.use_ldaps is True:
         try:
-            return init_ldap_connection(target, ssl.PROTOCOL_TLSv1_2, args, domain, username, password, lmhash, nthash)
+            return init_ldap_connection(target, ssl.PROTOCOL_TLSv1_2, args, domain, username, password, lmhash, nthash, logger)
         except ldap3.core.exceptions.LDAPSocketOpenError:
-            return init_ldap_connection(target, ssl.PROTOCOL_TLSv1, args, domain, username, password, lmhash, nthash)
+            return init_ldap_connection(target, ssl.PROTOCOL_TLSv1, args, domain, username, password, lmhash, nthash, logger)
     else:
-        return init_ldap_connection(target, None, args, domain, username, password, lmhash, nthash)
+        return init_ldap_connection(target, None, args, domain, username, password, lmhash, nthash, logger)
 
 
-def ldap3_kerberos_login(connection, target, user, password, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     from pyasn1.codec.ber import encoder, decoder
     from pyasn1.type.univ import noValue
+def ldap3_kerberos_login(connection, target, user, password, logger, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     """
     logins into the target system explicitly using Kerberos. Hashes are used if RC4_HMAC is supported.
     :param string user: username
@@ -307,14 +307,18 @@ class ShadowCredentials(object):
         try:
             device_id_in_current_values = False
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                if keyCredential.DeviceId is None:
-                    logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
-                    continue
-                if keyCredential.DeviceId.toFormatD() == device_id:
-                    self.logger.success("Found device Id")
-                    keyCredential.show()
-                    device_id_in_current_values = True
+                try:
+                    keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                    if keyCredential.DeviceId is None:
+                        self.logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                        continue
+                    if keyCredential.DeviceId.toFormatD() == device_id:
+                        self.logger.success("Found device Id")
+                        keyCredential.show()
+                        device_id_in_current_values = True
+                except Exception as err:
+                    self.logger.warning("Failed to parse keyCredential, error: %s, raw keyCredential: %s" % (str(err), dn_binary_value.decode()))
+                    self.logger.debug(traceback.format_exc())
             if not device_id_in_current_values:
                 self.logger.warning("No value with the provided DeviceID was found for the target object")
         except IndexError:
@@ -346,13 +350,16 @@ class ShadowCredentials(object):
             else:
                 self.logger.info("Listing devices for %s" % self.target_samname)
                 for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                    keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
-                    
-                    if keyCredential.DeviceId is None:
-                        self.logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
-                        self.logger.warning("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId, keyCredential.CreationTime))
-                    else:
-                        self.logger.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId.toFormatD(), keyCredential.CreationTime))
+                    try:
+                        keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
+                        if keyCredential.DeviceId is None:
+                            self.logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                            self.logger.warning("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId, keyCredential.CreationTime))
+                        else:
+                            self.logger.info("DeviceID: %s | Creation Time (UTC): %s" % (keyCredential.DeviceId.toFormatD(), keyCredential.CreationTime))
+                    except Exception as err:
+                        self.logger.warning("Failed to parse keyCredential, error: %s, raw keyCredential: %s" % (str(err), dn_binary_value.decode()))
+                        self.logger.debug(traceback.format_exc())
         except IndexError:
             self.logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
@@ -500,7 +507,7 @@ class ShadowCredentials(object):
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
                 keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
                 if keyCredential.DeviceId is None:
-                    logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
+                    self.logger.warning("Failed to parse DeviceId for keyCredential: %s" % (str(dn_binary_value)))
                     continue
                 if keyCredential.DeviceId.toFormatD() == device_id:
                     self.logger.info("Found value to remove")
@@ -637,11 +644,11 @@ class ShadowCredentials(object):
                     os.makedirs(os.path.dirname(filename), exist_ok=True)
             keyCredentialsJSON = {"keyCredentials":[]}
             for dn_binary_value in results['raw_attributes']['msDS-KeyCredentialLink']:
-                keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
                 try:
+                    keyCredential = KeyCredential.fromDNWithBinary(DNWithBinary.fromRawDNWithBinary(dn_binary_value))
                     keyCredentialsJSON["keyCredentials"].append(keyCredential.toDict())
                 except Exception as e:
-                    logger.warning(f"Failed to serialize keyCredential, error: %s, saving the raw keyCredential instead, i.e.: %s" % (str(e), dn_binary_value.decode()))
+                    self.logger.warning(f"Failed to serialize keyCredential, error: %s, saving the raw keyCredential instead, i.e.: %s" % (str(e), dn_binary_value.decode()))
                     keyCredentialsJSON["keyCredentials"].append(dn_binary_value.decode())
             with open(filename, "w") as f:
                 f.write(json.dumps(keyCredentialsJSON, indent=4))
@@ -861,7 +868,7 @@ def main():
             auth_nt_hash = args.auth_hashes
 
     try:
-        ldap_server, ldap_session = init_ldap_session(args=args, domain=args.auth_domain, username=args.auth_username, password=args.auth_password, lmhash=auth_lm_hash, nthash=auth_nt_hash)
+        ldap_server, ldap_session = init_ldap_session(args=args, domain=args.auth_domain, username=args.auth_username, password=args.auth_password, lmhash=auth_lm_hash, nthash=auth_nt_hash, logger=logger)
         shadowcreds = ShadowCredentials(ldap_server, ldap_session, target_samname, target_domain, logger)
         if args.action == 'list':
             shadowcreds.list()
