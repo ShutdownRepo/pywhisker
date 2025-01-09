@@ -94,6 +94,9 @@ def get_machine_name(args, domain):
 
 
 def init_ldap_schannel_connection(domain_controller, crt, key):
+    """
+    Initializes an LDAP connection using Schannel (certificate-based authentication).
+    """
     port = 636
     tls = ldap3.Tls(local_private_key_file=key, local_certificate_file=crt, validate=ssl.CERT_NONE)
     ldap_server_kwargs = {'use_ssl': True, 'port': port, 'tls': tls, 'get_info': ldap3.ALL}
@@ -158,19 +161,30 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
 
 def ldap3_kerberos_login(connection, target, user, password, logger, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     """
-    logins into the target system explicitly using Kerberos...
+    logins into the target system explicitly using Kerberos. Hashes are used if RC4_HMAC is supported.
+    :param string user: username
+    :param string password: password for the user
+    :param string domain: domain where the account is valid for (required)
+    :param string lmhash: LMHASH used to authenticate using hashes (password is not used)
+    :param string nthash: NTHASH used to authenticate using hashes (password is not used)
+    :param string aesKey: aes256-cts-hmac-sha1-96 or aes128-cts-hmac-sha1-96 used for Kerberos authentication
+    :param string kdcHost: hostname or IP Address for the KDC. If None, the domain will be used (it needs to resolve tho)
+    :param struct TGT: If there's a TGT available, send the structure here and it will be used
+    :param struct TGS: same for TGS. See smb3.py for the format
+    :param bool useCache: whether or not we should use the ccache for credentials lookup. If TGT or TGS are specified this is False
+    :return: True, raises an Exception if error.
     """
     if lmhash != '' or nthash != '':
         if len(lmhash) % 2:
             lmhash = '0' + lmhash
         if len(nthash) % 2:
             nthash = '0' + nthash
-        try:
+        try:  # just in case they were converted already
             lmhash = unhexlify(lmhash)
             nthash = unhexlify(nthash)
         except TypeError:
             pass
-
+    # Importing down here so pyasn1 is not required if kerberos is not used.
     from impacket.krb5.ccache import CCache
     from impacket.krb5.asn1 import AP_REQ, Authenticator, TGS_REP, seq_set
     from impacket.krb5.kerberosv5 import getKerberosTGT, getKerberosTGS
@@ -188,6 +202,7 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
         except Exception as e:
             pass
         if ccache is not None:
+            # retrieve domain information from CCache file if needed
             if domain == '':
                 domain = ccache.principal.realm['data'].decode('utf-8')
                 logger.debug('Domain retrieved from CCache: %s' % domain)
@@ -197,6 +212,7 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
 
             creds = ccache.getCredential(principal)
             if creds is None:
+                 # Let's try for the TGT and go from there
                 principal = 'krbtgt/%s@%s' % (domain.upper(), domain.upper())
                 creds = ccache.getCredential(principal)
                 if creds is not None:
@@ -207,14 +223,14 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
             else:
                 TGS = creds.toTGS(principal)
                 logger.debug('Using TGS from cache')
-
+            # retrieve user information from CCache file if needed
             if user == '' and creds is not None:
                 user = creds['client'].prettyPrint().split(b'@')[0].decode('utf-8')
                 logger.debug('Username retrieved from CCache: %s' % user)
             elif user == '' and len(ccache.principal.components) > 0:
                 user = ccache.principal.components[0]['data'].decode('utf-8')
                 logger.debug('Username retrieved from CCache: %s' % user)
-
+    # First of all, we need to get a TGT for the user
     userName = Principal(user, type=constants.PrincipalNameType.NT_PRINCIPAL.value)
     if TGT is None:
         if TGS is None:
@@ -231,10 +247,11 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
         tgs = TGS['KDC_REP']
         cipher = TGS['cipher']
         sessionKey = TGS['sessionKey']
-
+    # Let's build a NegTokenInit with a Kerberos REQ_AP
     blob = SPNEGO_NegTokenInit()
+    # Kerberos
     blob['MechTypes'] = [TypesMech['MS KRB5 - Microsoft Kerberos 5']]
-
+    # Let's extract the ticket from the TGS
     from impacket.krb5.asn1 import Ticket as Tickety
     from pyasn1.codec.der import decoder as der_decoder
     tgs = der_decoder.decode(tgs, asn1Spec=TGS_REP())[0]
@@ -262,15 +279,19 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     encodedAuthenticator = ber_encoder.encode(authenticator)
 
     encryptedEncodedAuthenticator = cipher.encrypt(sessionKey, 11, encodedAuthenticator, None)
+     # Now let's build the AP_REQ
     apReq['authenticator'] = noValue
     apReq['authenticator']['etype'] = cipher.enctype
     apReq['authenticator']['cipher'] = encryptedEncodedAuthenticator
-
+    # Key Usage 11
+    # AP-REQ Authenticator (includes application authenticator
+    # subkey), encrypted with the application session key
+    # (Section 5.5.1)
     from pyasn1.codec.ber import encoder as ber_encoder2
     blob['MechToken'] = ber_encoder2.encode(apReq)
 
     request = ldap3.operation.bind.bind_operation(connection.version, ldap3.SASL, user, None, 'GSS-SPNEGO', blob.getData())
-
+    # Done with the Kerberos saga, now let's get into LDAP
     if connection.closed:
         connection.open(read_server_info=False)
 
@@ -720,7 +741,22 @@ class Logger(object):
             exit(0)
         elif verbosity == 4:
             art = """
-
+    ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠛⠋⠉⡉⣉⡛⣛⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣿⣿⡿⠋⠁⠄⠄⠄⠄⠄⢀⣸⣿⣿⡿⠿⡯⢙⠿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣿⡿⠄⠄⠄⠄⠄⡀⡀⠄⢀⣀⣉⣉⣉⠁⠐⣶⣶⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣿⡇⠄⠄⠄⠄⠁⣿⣿⣀⠈⠿⢟⡛⠛⣿⠛⠛⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣿⡆⠄⠄⠄⠄⠄⠈⠁⠰⣄⣴⡬⢵⣴⣿⣤⣽⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣿⡇⠄⢀⢄⡀⠄⠄⠄⠄⡉⠻⣿⡿⠁⠘⠛⡿⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⡿⠃⠄⠄⠈⠻⠄⠄⠄⠄⢘⣧⣀⠾⠿⠶⠦⢳⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⣿⣶⣤⡀⢀⡀⠄⠄⠄⠄⠄⠄⠻⢣⣶⡒⠶⢤⢾⣿⣿⣿⣿⣿⣿⣿
+    ⣿⣿⣿⣿⡿⠟⠋⠄⢘⣿⣦⡀⠄⠄⠄⠄⠄⠉⠛⠻⠻⠺⣼⣿⠟⠋⠛⠿⣿⣿
+    ⠋⠉⠁⠄⠄⠄⠄⠄⠄⢻⣿⣿⣶⣄⡀⠄⠄⠄⠄⢀⣤⣾⣿⣿⡀⠄⠄⠄⠄⢹
+    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⢻⣿⣿⣿⣷⡤⠄⠰⡆⠄⠄⠈⠉⠛⠿⢦⣀⡀⡀⠄
+    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠈⢿⣿⠟⡋⠄⠄⠄⢣⠄⠄⠄⠄⠄⠄⠄⠈⠹⣿⣀
+    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠘⣷⣿⣿⣷⠄⠄⢺⣇⠄⠄⠄⠄⠄⠄⠄⠄⠸⣿
+    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠹⣿⣿⡇⠄⠄⠸⣿⡄⠄⠈⠁⠄⠄⠄⠄⠄⣿
+    ⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⠄⢻⣿⡇⠄⠄⠄⢹⣧⠄⠄⠄⠄⠄⠄⠄⠄⠘⠀⠀⠀⠀⠀⠀
+    
 
     ⠀The best tools in the history of tools. Ever.
 """
@@ -728,12 +764,46 @@ class Logger(object):
             exit(0)
         elif verbosity == 5:
             art = """
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢤⣶⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⡾⠿⢿⡀⠀⠀⠀⠀⣠⣶⣿⣷⠀⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣦⣴⣿⡋⠀⠀⠈⢳⡄⠀⢠⣾⣿⠁⠈⣿⡆⠀⠀⠀
+    ⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⠿⠛⠉⠉⠁⠀⠀⠀⠹⡄⣿⣿⣿⠀⠀⢹⡇⠀⠀⠀
+    ⠀⠀⠀⠀⠀⣠⣾⡿⠋⠁⠀⠀⠀⠀⠀⠀⠀⠀⣰⣏⢻⣿⣿⡆⠀⠸⣿⠀⠀⠀
+    ⠀⠀⠀⢀⣴⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿⣆⠹⣿⣷⠀⢘⣿⠀⠀⠀
+    ⠀⠀⢀⡾⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⠋⠉⠛⠂⠹⠿⣲⣿⣿⣧⠀⠀
+    ⠀⢠⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣿⣿⣿⣷⣾⣿⡇⢀⠀⣼⣿⣿⣿⣧⠀
+    ⠰⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⡘⢿⣿⣿⣿⠀
+    ⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⣷⡈⠿⢿⣿⡆
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠛⠁⢙⠛⣿⣿⣿⣿⡟⠀⡿⠀⠀⢀⣿⡇
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣶⣤⣉⣛⠻⠇⢠⣿⣾⣿⡄⢻⡇
+    ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣦⣤⣾⣿⣿⣿⣿⣆⠁
+⠀ 🈵⠀STOP INCREASING VERBOSITY (PUNK!) 🈵⠀
+"""
+            print(art)
+            exit(0)
 
+        elif verbosity == 6:
+            art = """
+    ⣿⣿⣿⣿⣿⣿⠟⠋⠁⣀⣤⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⢿⣿⣿
+    ⣿⣿⣿⣿⠋⠁⠀⠀⠺⠿⢿⣿⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠻⣿
+    ⣿⣿⡟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣤⣤⣤⣤⠀⠀⠀⠀⠀⣤⣦⣄⠀⠀
+    ⣿⡟⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣤⣶⣿⠏⣿⣿⣿⣿⣿⣁⠀⠀⠀⠛⠙⠛⠋⠀⠀
+    ⡿⠀⠀⠀⠀⠀⠀⠀⠀⡀⠀⣰⣿⣿⣿⣿⡄⠘⣿⣿⣿⣿⣷⠄⠀⠀⠀⠀⠀⠀⠀⠀
+    ⡇⠀⠀⠀⠀⠀⠀⠀⠸⠇⣼⣿⣿⣿⣿⣿⣷⣄⠘⢿⣿⣿⣿⣅⠀⠀⠀⠀⠀⠀⠀⠀
+    ⠁⠀⠀⠀⣴⣿⠀⣐⣣⣸⣿⣿⣿⣿⣿⠟⠛⠛⠀⠌⠻⣿⣿⣿⡄⠀⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⣶⣮⣽⣰⣿⡿⢿⣿⣿⣿⣿⣿⡀⢿⣤⠄⢠⣄⢹⣿⣿⣿⡆⠀⠀⠀⠀⠀⠀
+    ⠀⠀⠀⣿⣿⣿⣿⣿⡘⣿⣿⣿⣿⣿⣿⠿⣶⣶⣾⣿⣿⡆⢻⣿⣿⠃⢠⠖⠛⣛⣷⠀
+    ⠀⠀⢸⣿⣿⣿⣿⣿⣿⣾⣿⣿⣿⣿⣿⣿⣮⣝⡻⠿⠿⢃⣄⣭⡟⢀⡎⣰⡶⣪⣿⠀
+    ⠀⠀⠘⣿⣿⣿⠟⣛⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣿⣿⣿⡿⢁⣾⣿⢿⣿⣿⠏⠀
+    ⠀⠀⠀⣻⣿⡟⠘⠿⠿⠎⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣵⣿⣿⠧⣷⠟⠁⠀⠀
+    ⡇⠀⠀⢹⣿⡧⠀⡀⠀⣀⠀⠹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠋⢰⣿⠀⠀⠀⠀
+    ⡇⠀⠀⠀⢻⢰⣿⣶⣿⡿⠿⢂⣿⣿⣿⣿⣿⣿⣿⢿⣻⣿⣿⣿⡏⠀⠀⠁⠀⠀⠀⠀
+    ⣷⠀⠀⠀⠀⠈⠿⠟⣁⣴⣾⣿⣿⠿⠿⣛⣋⣥⣶⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀
     yamete kudasai !!!
 """
             print(art)
             exit(0)
-        elif verbosity > 5:
+        elif verbosity > 6:
             print("Sorry bruh, no more easter eggs")
             exit(0)
 
