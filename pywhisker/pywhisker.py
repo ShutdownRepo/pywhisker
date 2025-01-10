@@ -92,9 +92,12 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
             return init_ldap_schannel_connection(target, args.crt, args.key)
         except ldap3.core.exceptions.LDAPSocketOpenError:
             raise Exception(f"[ERROR] Failed to open LDAP Schannel connection to {target}")
-        
+
     if args.use_kerberos:
-        target = get_machine_name(args, domain)
+        if args.dc_host is not None:
+            target = args.dc_host
+        else:
+            target = get_machine_name(args, domain)
     else:
         if args.dc_ip is not None:
             target = args.dc_ip
@@ -110,8 +113,6 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
         return init_ldap_connection(target, None, args, domain, username, password, lmhash, nthash, logger)
 
 
-    from pyasn1.codec.ber import encoder, decoder
-    from pyasn1.type.univ import noValue
 def ldap3_kerberos_login(connection, target, user, password, logger, domain='', lmhash='', nthash='', aesKey='', kdcHost=None, TGT=None, TGS=None, useCache=True):
     """
     logins into the target system explicitly using Kerberos. Hashes are used if RC4_HMAC is supported.
@@ -127,6 +128,8 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     :param bool useCache: whether or not we should use the ccache for credentials lookup. If TGT or TGS are specified this is False
     :return: True, raises an Exception if error.
     """
+    from pyasn1.codec.ber import encoder, decoder
+    from pyasn1.type.univ import noValue
 
     if lmhash != '' or nthash != '':
         if len(lmhash) % 2:
@@ -798,6 +801,7 @@ def parse_args():
 
     authconn = parser.add_argument_group('authentication & connection')
     authconn.add_argument('--dc-ip', action='store', metavar="ip address", help='IP Address of the domain controller or KDC (Key Distribution Center) for Kerberos. If omitted it will use the domain part (FQDN) specified in the identity parameter')
+    authconn.add_argument('--dc-host', action='store', metavar='DC_HOST', default=None, help='Hostname of the target, can be used if port 445 is blocked or if NTLM is disabled')
     authconn.add_argument("-d", "--domain", dest="auth_domain", metavar="DOMAIN", action="store", help="(FQDN) domain to authenticate to")
     authconn.add_argument("-u", "--user", dest="auth_username", metavar="USER", action="store", help="user to authenticate with")
     authconn.add_argument("-crt", "--certfile", dest="crt", metavar="CERTFILE", help="Path to the user certificate (PEM format) for Schannel authentication")
