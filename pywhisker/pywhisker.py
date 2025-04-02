@@ -120,16 +120,21 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
         port = 389
         tls = None
     ldap_server = ldap3.Server(connect_to, get_info=ldap3.ALL, port=port, use_ssl=use_ssl, tls=tls)
+    channel_binding = {}
+    if args.ldap_channel_binding:
+        if not hasattr(ldap3, 'TLS_CHANNEL_BINDING'):
+            raise Exception("To use LDAP channel binding, install the patched ldap3 module: pip3 install git+https://github.com/ly4k/ldap3")
+        channel_binding["channel_binding"] = ldap3.TLS_CHANNEL_BINDING if args.ldap_channel_binding else None
     if args.use_kerberos:
-        ldap_session = ldap3.Connection(ldap_server)
+        ldap_session = ldap3.Connection(ldap_server, **channel_binding)
         ldap_session.bind()
         ldap3_kerberos_login(ldap_session, target, username, password, logger, domain, lmhash, nthash, args.auth_key, kdcHost=args.dc_ip)
     elif args.auth_hashes is not None:
         if lmhash == "":
             lmhash = "aad3b435b51404eeaad3b435b51404ee"
-        ldap_session = ldap3.Connection(ldap_server, user=user, password=lmhash + ":" + nthash, authentication=ldap3.NTLM, auto_bind=True)
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=lmhash + ":" + nthash, authentication=ldap3.NTLM, auto_bind=True, **channel_binding)
     else:
-        ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM, auto_bind=True)
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM, auto_bind=True, **channel_binding)
 
     return ldap_server, ldap_session
 
@@ -153,7 +158,7 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
         else:
             target = domain
 
-    if args.use_ldaps is True:
+    if args.scheme == "ldaps" or args.scheme == "LDAPS":
         try:
             return init_ldap_connection(target, ssl.PROTOCOL_TLSv1_2, args, domain, username, password, lmhash, nthash, logger)
         except ldap3.core.exceptions.LDAPSocketOpenError:
@@ -844,7 +849,8 @@ def parse_args():
     target.add_argument("-tl", "--target-list", type=str, dest="target_samname_list", help="Path to a file with target accounts names (one per line)")
 
     parser.add_argument("-a", "--action", choices=['list', 'add', 'spray', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
-    parser.add_argument('--use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
+    parser.add_argument('--scheme', action="store", metavar="scheme", default="ldap", help='LDAP scheme to use (ldap or ldaps)')
+    parser.add_argument('--ldap-channel-binding', action='store_true', default=False, help='enables LDAP Channel Binding')
     parser.add_argument('--use-schannel', action='store_true', help='Use LDAP Schannel (TLS) for certificate-based authentication')
     parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0, help="verbosity level (-v for verbose, -vv for debug)")
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
