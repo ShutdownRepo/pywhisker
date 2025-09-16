@@ -257,7 +257,7 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     # Kerberos
     blob['MechTypes'] = [TypesMech['MS KRB5 - Microsoft Kerberos 5']]
     # Let's extract the ticket from the TGS
-    from impacket.krb5.asn1 import Ticket as Tickety
+    from impacket.krb5.types import Ticket as Tickety
     from pyasn1.codec.der import decoder as der_decoder
     tgs = der_decoder.decode(tgs, asn1Spec=TGS_REP())[0]
     ticket = Tickety()
