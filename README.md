@@ -61,6 +61,7 @@ optional arguments:
   -a [{list,add,spray,remove,clear,info,export,import}], --action [{list,add,spray,remove,clear,info,export,import}]
                         Action to operate on msDS-KeyCredentialLink
   --use-ldaps           Use LDAPS instead of LDAP
+  --use-starttls        Use STARTTLS for LDAP connection upgrade
   --use-schannel        Use LDAP Schannel (TLS) for certificate-based authentication
   -v, --verbose         verbosity level (-v for verbose, -vv for debug)
   -q, --quiet           show no information at all
