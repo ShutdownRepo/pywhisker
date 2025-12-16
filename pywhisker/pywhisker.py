@@ -134,6 +134,43 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
     return ldap_server, ldap_session
 
 
+def init_ldap_starttls_connection(target, tls_version, args, domain, username, password, lmhash, nthash, logger):
+    """
+    Initializes an LDAP connection using STARTTLS (upgrade from plain LDAP to TLS).
+    Connects to port 389 and upgrades the connection to TLS.
+    """
+    user = '%s\\%s' % (domain, username)
+    connect_to = target
+    if args.dc_ip is not None:
+        connect_to = args.dc_ip
+
+    # STARTTLS uses port 389 (plain LDAP) and upgrades to TLS
+    port = 389
+    tls = ldap3.Tls(validate=ssl.CERT_NONE, version=tls_version)
+    ldap_server = ldap3.Server(connect_to, get_info=ldap3.ALL, port=port, use_ssl=False, tls=tls)
+
+    if args.use_kerberos:
+        ldap_session = ldap3.Connection(ldap_server)
+        ldap_session.open()
+        ldap_session.start_tls()
+        ldap_session.bind()
+        ldap3_kerberos_login(ldap_session, target, username, password, logger, domain, lmhash, nthash, args.auth_key, kdcHost=args.dc_ip)
+    elif args.auth_hashes is not None:
+        if lmhash == "":
+            lmhash = "aad3b435b51404eeaad3b435b51404ee"
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=lmhash + ":" + nthash, authentication=ldap3.NTLM)
+        ldap_session.open()
+        ldap_session.start_tls()
+        ldap_session.bind()
+    else:
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM)
+        ldap_session.open()
+        ldap_session.start_tls()
+        ldap_session.bind()
+
+    return ldap_server, ldap_session
+
+
 def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
     if args.use_schannel:
         target = args.dc_ip if args.dc_ip is not None else domain
@@ -153,7 +190,12 @@ def init_ldap_session(args, domain, username, password, lmhash, nthash, logger):
         else:
             target = domain
 
-    if args.use_ldaps is True:
+    if args.use_starttls is True:
+        try:
+            return init_ldap_starttls_connection(target, ssl.PROTOCOL_TLSv1_2, args, domain, username, password, lmhash, nthash, logger)
+        except ldap3.core.exceptions.LDAPSocketOpenError:
+            return init_ldap_starttls_connection(target, ssl.PROTOCOL_TLSv1, args, domain, username, password, lmhash, nthash, logger)
+    elif args.use_ldaps is True:
         try:
             return init_ldap_connection(target, ssl.PROTOCOL_TLSv1_2, args, domain, username, password, lmhash, nthash, logger)
         except ldap3.core.exceptions.LDAPSocketOpenError:
@@ -845,6 +887,7 @@ def parse_args():
 
     parser.add_argument("-a", "--action", choices=['list', 'add', 'spray', 'remove', 'clear', 'info', 'export', 'import'], nargs='?', default='list', help='Action to operate on msDS-KeyCredentialLink')
     parser.add_argument('--use-ldaps', action='store_true', help='Use LDAPS instead of LDAP')
+    parser.add_argument('--use-starttls', action='store_true', help='Use STARTTLS for LDAP connection upgrade')
     parser.add_argument('--use-schannel', action='store_true', help='Use LDAP Schannel (TLS) for certificate-based authentication')
     parser.add_argument("-v", "--verbose", dest="verbosity", action="count", default=0, help="verbosity level (-v for verbose, -vv for debug)")
     parser.add_argument("-q", "--quiet", dest="quiet", action="store_true", default=False, help="show no information at all")
