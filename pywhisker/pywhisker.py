@@ -127,9 +127,25 @@ def init_ldap_connection(target, tls_version, args, domain, username, password, 
     elif args.auth_hashes is not None:
         if lmhash == "":
             lmhash = "aad3b435b51404eeaad3b435b51404ee"
-        ldap_session = ldap3.Connection(ldap_server, user=user, password=lmhash + ":" + nthash, authentication=ldap3.NTLM, auto_bind=True)
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=lmhash + ":" + nthash, authentication=ldap3.NTLM)
+        ldap_session.bind()
+        if not ldap_session.bound:
+            error_message = ldap_session.result.get('message', '')
+            if "00002028" in error_message and "integrity checking" in error_message:
+                raise Exception(error_message + "\n\nThe server requires SSL/TLS to be active on the connection.\nPlease use --use-starttls or --use-ldaps to enable encryption.")
+            elif "80090346" in error_message or "channel binding" in error_message.lower():
+                raise Exception(error_message + "\n\nThe server requires LDAP Channel Binding, which is not supported by ldap3 for NTLM authentication.\nPlease use one of these alternatives:\n  - Kerberos authentication: --use-kerberos -k\n  - Certificate-based authentication: --use-schannel --crt <cert.pem> --key <key.pem>")
+            raise Exception(f"LDAP bind failed: {ldap_session.result}")
     else:
-        ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM, auto_bind=True)
+        ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM)
+        ldap_session.bind()
+        if not ldap_session.bound:
+            error_message = ldap_session.result.get('message', '')
+            if "00002028" in error_message and "integrity checking" in error_message:
+                raise Exception(error_message + "\n\nThe server requires SSL/TLS to be active on the connection.\nPlease use --use-starttls or --use-ldaps to enable encryption.")
+            elif "80090346" in error_message or "channel binding" in error_message.lower():
+                raise Exception(error_message + "\n\nThe server requires LDAP Channel Binding, which is not supported by ldap3 for NTLM authentication.\nPlease use one of these alternatives:\n  - Kerberos authentication: --use-kerberos -k\n  - Certificate-based authentication: --use-schannel --crt <cert.pem> --key <key.pem>")
+            raise Exception(f"LDAP bind failed: {ldap_session.result}")
 
     return ldap_server, ldap_session
 
@@ -162,11 +178,25 @@ def init_ldap_starttls_connection(target, tls_version, args, domain, username, p
         ldap_session.open()
         ldap_session.start_tls()
         ldap_session.bind()
+        if not ldap_session.bound:
+            error_message = ldap_session.result.get('message', '')
+            if "00002028" in error_message and "integrity checking" in error_message:
+                raise Exception(error_message + "\n\nThe server requires SSL/TLS to be active on the connection.\nPlease use --use-starttls or --use-ldaps to enable encryption.")
+            elif "80090346" in error_message or "channel binding" in error_message.lower():
+                raise Exception(error_message + "\n\nThe server requires LDAP Channel Binding, which is not supported by ldap3 for NTLM authentication.\nPlease use one of these alternatives:\n  - Kerberos authentication: --use-kerberos -k\n  - Certificate-based authentication: --use-schannel --crt <cert.pem> --key <key.pem>")
+            raise Exception(f"LDAP bind failed: {ldap_session.result}")
     else:
         ldap_session = ldap3.Connection(ldap_server, user=user, password=password, authentication=ldap3.NTLM)
         ldap_session.open()
         ldap_session.start_tls()
         ldap_session.bind()
+        if not ldap_session.bound:
+            error_message = ldap_session.result.get('message', '')
+            if "00002028" in error_message and "integrity checking" in error_message:
+                raise Exception(error_message + "\n\nThe server requires SSL/TLS to be active on the connection.\nPlease use --use-starttls or --use-ldaps to enable encryption.")
+            elif "80090346" in error_message or "channel binding" in error_message.lower():
+                raise Exception(error_message + "\n\nThe server requires LDAP Channel Binding, which is not supported by ldap3 for NTLM authentication.\nPlease use one of these alternatives:\n  - Kerberos authentication: --use-kerberos -k\n  - Certificate-based authentication: --use-schannel --crt <cert.pem> --key <key.pem>")
+            raise Exception(f"LDAP bind failed: {ldap_session.result}")
 
     return ldap_server, ldap_session
 
@@ -346,7 +376,11 @@ def ldap3_kerberos_login(connection, target, user, password, logger, domain='', 
     response = connection.post_send_single_response(connection.send('bindRequest', request, None))
     connection.sasl_in_progress = False
     if response[0]['result'] != 0:
-        raise Exception(response)
+        error_message = response[0]['message']
+        # Check for the specific error that requires SSL/TLS
+        if "00002028" in error_message and "integrity checking" in error_message:
+            raise Exception("Kerberos error: " + error_message + "\n\nThe server requires SSL/TLS to be active on the connection.\nPlease use --use-starttls or --use-ldaps to enable encryption.")
+        raise Exception("Kerberos error: " + error_message)
 
     connection.bound = True
     return True
