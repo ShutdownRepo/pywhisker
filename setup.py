@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pywhisker",
-    version="0.1.0",
+    version="1.0.0",
     author="Charlie Bromberg & Podalirius",
     author_email="",
     description="Python (re)setter for property msDS-KeyCredentialLink for Shadow Credentials attacks",
