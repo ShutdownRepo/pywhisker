@@ -6,4 +6,4 @@ ldap3
 ldapdomaindump
 rich
 setuptools
-dsinternals
+dsinternals>=1.2.5
