@@ -15,6 +15,18 @@ from binascii import unhexlify
 import argparse
 import ldap3
 
+def _ldap3_version_tuple(version_string):
+    parts = []
+    for chunk in version_string.split('.'):
+        digits = ''
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
 def _patch_ldap3_md4():
     import hashlib
     import hmac
@@ -23,6 +35,11 @@ def _patch_ldap3_md4():
         hashlib.new('MD4', b'')
         return  # hashlib MD4 available (Python <= 3.12 / permissive OpenSSL)
     except ValueError:
+        pass
+    try:
+        if _ldap3_version_tuple(ldap3.__version__) >= (2, 10, 1):
+            return  # ldap3 >= 2.10.1 calls Cryptodome.Hash.MD4 directly, already fixed upstream
+    except Exception:
         pass
     def _md4(data):
         def _f(x, y, z): return (x & y) | (~x & z)
