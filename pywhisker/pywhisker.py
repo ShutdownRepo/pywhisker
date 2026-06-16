@@ -24,11 +24,6 @@ def _patch_ldap3_md4():
         return  # hashlib MD4 available (Python <= 3.12 / permissive OpenSSL)
     except ValueError:
         pass
-    try:
-        from Cryptodome.Hash import MD4  # noqa: F401
-        return  # pycryptodomex available (ldap3 >= 2.10.1 uses this directly)
-    except ImportError:
-        pass
     def _md4(data):
         def _f(x, y, z): return (x & y) | (~x & z)
         def _g(x, y, z): return (x & y) | (x & z) | (y & z)
@@ -71,7 +66,11 @@ def _patch_ldap3_md4():
                     from Crypto.Hash import MD4
                     password_digest = MD4.new(self._password.encode('utf-16-le')).digest()
                 except ImportError:
-                    password_digest = _md4(self._password.encode('utf-16-le'))
+                    try:
+                        from Cryptodome.Hash import MD4
+                        password_digest = MD4.new(self._password.encode('utf-16-le')).digest()
+                    except ImportError:
+                        password_digest = _md4(self._password.encode('utf-16-le'))
         return hmac.new(password_digest, (self.user_name.upper() + self.user_domain).encode('utf-16-le'), digestmod=hashlib.md5).digest()
     _ntlm.NtlmClient.ntowf_v2 = _ntowf_v2
 
