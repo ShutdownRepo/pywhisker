@@ -14,6 +14,84 @@ from binascii import unhexlify
 
 import argparse
 import ldap3
+
+def _ldap3_version_tuple(version_string):
+    parts = []
+    for chunk in version_string.split('.'):
+        digits = ''
+        for ch in chunk:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+def _patch_ldap3_md4():
+    import hashlib
+    import hmac
+    import struct
+    try:
+        hashlib.new('MD4', b'')
+        return  # hashlib MD4 available (Python <= 3.12 / permissive OpenSSL)
+    except ValueError:
+        pass
+    try:
+        if _ldap3_version_tuple(ldap3.__version__) >= (2, 10, 1):
+            return  # ldap3 >= 2.10.1 calls Cryptodome.Hash.MD4 directly, already fixed upstream
+    except Exception:
+        pass
+    def _md4(data):
+        def _f(x, y, z): return (x & y) | (~x & z)
+        def _g(x, y, z): return (x & y) | (x & z) | (y & z)
+        def _h(x, y, z): return x ^ y ^ z
+        def _r(v, s): return ((v << s) | (v >> (32 - s))) & 0xFFFFFFFF
+        msg = bytearray(data)
+        orig_len = len(data) * 8
+        msg.append(0x80)
+        while len(msg) % 64 != 56:
+            msg.append(0)
+        msg += struct.pack('<Q', orig_len)
+        a, b, c, d = 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476
+        for i in range(0, len(msg), 64):
+            X = struct.unpack('<16I', msg[i:i+64])
+            aa, bb, cc, dd = a, b, c, d
+            for j in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]:
+                a = _r((a + _f(b,c,d) + X[j]) & 0xFFFFFFFF, [3,7,11,19][j%4])
+                a, b, c, d = d, a, b, c
+            for j, k in enumerate([0,4,8,12,1,5,9,13,2,6,10,14,3,7,11,15]):
+                a = _r((a + _g(b,c,d) + X[k] + 0x5A827999) & 0xFFFFFFFF, [3,5,9,13][j%4])
+                a, b, c, d = d, a, b, c
+            for j, k in enumerate([0,8,4,12,2,10,6,14,1,9,5,13,3,11,7,15]):
+                a = _r((a + _h(b,c,d) + X[k] + 0x6ED9EBA1) & 0xFFFFFFFF, [3,9,11,15][j%4])
+                a, b, c, d = d, a, b, c
+            a = (a + aa) & 0xFFFFFFFF
+            b = (b + bb) & 0xFFFFFFFF
+            c = (c + cc) & 0xFFFFFFFF
+            d = (d + dd) & 0xFFFFFFFF
+        return struct.pack('<4I', a, b, c, d)
+    import ldap3.utils.ntlm as _ntlm
+    def _ntowf_v2(self):
+        passparts = self._password.split(':')
+        if len(passparts) == 2 and len(passparts[0]) == 32 and len(passparts[1]) == 32:
+            password_digest = unhexlify(passparts[1])
+        else:
+            try:
+                password_digest = hashlib.new('MD4', self._password.encode('utf-16-le')).digest()
+            except ValueError:
+                try:
+                    from Crypto.Hash import MD4
+                    password_digest = MD4.new(self._password.encode('utf-16-le')).digest()
+                except ImportError:
+                    try:
+                        from Cryptodome.Hash import MD4
+                        password_digest = MD4.new(self._password.encode('utf-16-le')).digest()
+                    except ImportError:
+                        password_digest = _md4(self._password.encode('utf-16-le'))
+        return hmac.new(password_digest, (self.user_name.upper() + self.user_domain).encode('utf-16-le'), digestmod=hashlib.md5).digest()
+    _ntlm.NtlmClient.ntowf_v2 = _ntowf_v2
+
+_patch_ldap3_md4()
 import ldapdomaindump
 import os
 import ssl
