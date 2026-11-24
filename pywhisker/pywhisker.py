@@ -1043,6 +1043,9 @@ def main():
         if args.verbosity >= 1:
             traceback.print_exc()
         logger.error(str(e))
+        # Every other failure path in main() exits 1; without this an
+        # unreachable DC or a failed bind still looked like a success.
+        sys.exit(1)
 
 
 if __name__ == '__main__':
